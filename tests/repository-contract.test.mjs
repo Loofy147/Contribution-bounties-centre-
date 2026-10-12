@@ -117,7 +117,7 @@ test('CodeQL is enabled for JavaScript and TypeScript with job-scoped write perm
 test('secret scanning installs a pinned CLI without account lookup or report uploads', () => {
   assert.match(secretsWorkflow, /^permissions:\n  contents: read$/m);
   assert.match(secretsWorkflow, /fetch-depth: 0/);
-  assert.match(secretsWorkflow, /go-version: "1\.25\.3"/);
+  assert.match(secretsWorkflow, /go-version: "1\.25\.4"/);
   assert.match(secretsWorkflow, /go install github\.com\/zricethezav\/gitleaks\/v8@v8\.30\.0/);
   assert.match(secretsWorkflow, /gitleaks detect --source \. --redact/);
   assert.doesNotMatch(secretsWorkflow, /pull_request_target/);
