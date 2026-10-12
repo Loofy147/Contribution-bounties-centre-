@@ -21,6 +21,7 @@ Acceptance currently grants 50 platform XP and increments an accepted-work count
 ## Repository guidance
 
 - [Portfolio alignment and repository responsibilities](docs/portfolio-alignment.md)
+- [Platform integration architecture: GitHub, MCP, data boundaries, and engineering primitives](docs/platform-integration-architecture.md)
 - [Architecture and runtime boundaries](docs/architecture.md)
 - [Acceptance protocol](docs/acceptance-protocol.md)
 - [Engineering decisions](docs/decisions.md)
