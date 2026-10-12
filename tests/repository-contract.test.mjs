@@ -114,18 +114,20 @@ test('CodeQL is enabled for JavaScript and TypeScript with job-scoped write perm
 });
 
 
-test('secret scanning is SHA-pinned and does not write comments or publish report artifacts', () => {
+test('secret scanning installs a pinned CLI without account lookup or report uploads', () => {
   assert.match(secretsWorkflow, /^permissions:\n  contents: read$/m);
-  assert.match(secretsWorkflow, /^      pull-requests: read$/m);
-  assert.match(secretsWorkflow, /GITLEAKS_ENABLE_COMMENTS: "false"/);
-  assert.match(secretsWorkflow, /GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"/);
   assert.match(secretsWorkflow, /fetch-depth: 0/);
+  assert.match(secretsWorkflow, /go-version: "1\.25\.3"/);
+  assert.match(secretsWorkflow, /go install github\.com\/zricethezav\/gitleaks\/v8@v8\.30\.0/);
+  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact/);
   assert.doesNotMatch(secretsWorkflow, /pull_request_target/);
   assert.doesNotMatch(secretsWorkflow, /pull-requests:\s*write/);
+  assert.doesNotMatch(secretsWorkflow, /secrets\./);
+  assert.doesNotMatch(secretsWorkflow, /GITLEAKS_ENABLE_UPLOAD_ARTIFACT/);
 
   const actionRefs = [...secretsWorkflow.matchAll(/^\s*uses:\s*([^\s]+)/gm)]
     .map((match) => match[1]);
-  assert.ok(actionRefs.length >= 2, 'expected checkout and Gitleaks actions');
+  assert.ok(actionRefs.length >= 2, 'expected checkout and Go setup actions');
   for (const reference of actionRefs) {
     assert.match(
       reference,
