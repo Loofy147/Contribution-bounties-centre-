@@ -13,6 +13,10 @@ const workflow = await readFile(
   new URL('../.github/workflows/repository-contract.yml', import.meta.url),
   'utf8',
 );
+const codeqlWorkflow = await readFile(
+  new URL('../.github/workflows/codeql.yml', import.meta.url),
+  'utf8',
+);
 
 test('QA manifest includes the core workflow scenarios', () => {
   assert.equal(manifest.length, 5, 'expected five documented browser scenarios');
@@ -73,6 +77,29 @@ test('CI workflow has least privilege, immutable actions, and bounded execution'
     .map((match) => match[1]);
 
   assert.ok(actionRefs.length >= 2, 'expected checkout and Node setup actions');
+  for (const reference of actionRefs) {
+    assert.match(
+      reference,
+      /@[a-f0-9]{40}$/i,
+      `workflow action must be pinned to a full commit SHA: ${reference}`,
+    );
+  }
+});
+
+
+test('CodeQL is enabled for JavaScript and TypeScript with job-scoped write permission', () => {
+  assert.match(codeqlWorkflow, /^  pull_request:/m);
+  assert.match(codeqlWorkflow, /^  schedule:/m);
+  assert.match(codeqlWorkflow, /languages: javascript-typescript/);
+  assert.match(codeqlWorkflow, /build-mode: none/);
+  assert.match(codeqlWorkflow, /security-events: write/);
+  assert.match(codeqlWorkflow, /^permissions:\n  contents: read$/m);
+  assert.doesNotMatch(codeqlWorkflow, /pull_request_target/);
+  assert.doesNotMatch(codeqlWorkflow, /secrets\./);
+
+  const actionRefs = [...codeqlWorkflow.matchAll(/^\s*uses:\s*([^\s]+)/gm)]
+    .map((match) => match[1]);
+  assert.ok(actionRefs.length >= 3, 'expected checkout and CodeQL init/analyze');
   for (const reference of actionRefs) {
     assert.match(
       reference,
