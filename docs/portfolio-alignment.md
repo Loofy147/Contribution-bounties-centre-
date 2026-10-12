@@ -13,6 +13,12 @@
 
 The Contribution Network itself is Project 0 and the first real project. Its founder is the first consumer and contributes requirements, architecture, research, implementation, testing, documentation, security analysis, integration, and maintenance. These activities are eligible to be recorded as contributions. The current application does not yet implement the full founder self-contribution XP flow or verification-level labels; until then, use GitHub issues/PRs and inspectable evidence, and do not claim the app awarded XP.
 
+## Current working boundary and deferred handover
+
+During implementation, work remains in the existing `Loofy147` repositories: [`contribution-network`](https://github.com/Loofy147/contribution-network) is the strategic source of truth, and this repository is the application prototype. Use GitHub issues, pull requests, committed documentation, tests, and inspectable evidence to track progress.
+
+[`contribution-cloud/Contributions-centre`](https://github.com/contribution-cloud/Contributions-centre) is the planned future portfolio/repository control plane, **not the current working location**. Do not initialize it, move implementation there, or make this app depend on it before the system passes the readiness gates in the [first-consumer charter](https://github.com/Loofy147/contribution-network/blob/main/docs/10-first-consumer-project-charter.md). Those gates include reproducible setup/build, live verification of core transitions, tested project isolation and authorization, secure credential/API lifecycles, verified GitHub repository operations, and audit/recovery controls. The charter is the authoritative gate; this document records the app's current status and dependencies.
+
 ## Shared policy
 
 1. Any relevant, lawful type of contribution may be proposed; software code is not the only valid contribution.
