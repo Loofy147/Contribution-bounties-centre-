@@ -121,6 +121,10 @@ test('secret scanning installs a pinned CLI without account lookup or report upl
   assert.match(secretsWorkflow, /go-version: "1\.25\.4"/);
   assert.match(secretsWorkflow, /go install github\.com\/zricethezav\/gitleaks\/v8@v8\.30\.0/);
   assert.match(secretsWorkflow, /gitleaks detect --source \. --redact/);
+  assert.ok(secretsWorkflow.includes("REPORT_PATH: ${{ runner.temp }}/gitleaks-report.json"));
+  assert.ok(secretsWorkflow.includes("jq -c '[.[] | {RuleID, File, Commit, StartLine, Fingerprint}]'"));
+  assert.match(secretsWorkflow, /rm -f "\$REPORT_PATH"/);
+  assert.doesNotMatch(secretsWorkflow, /Match, Secret/);
   assert.doesNotMatch(secretsWorkflow, /pull_request_target/);
   assert.doesNotMatch(secretsWorkflow, /pull-requests:\s*write/);
   assert.doesNotMatch(secretsWorkflow, /secrets\./);
