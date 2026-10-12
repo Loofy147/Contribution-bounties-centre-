@@ -6,6 +6,13 @@ const manifest = JSON.parse(
   await readFile(new URL('./tests.json', import.meta.url), 'utf8'),
 );
 const backend = await readFile(new URL('../backend/index.ts', import.meta.url), 'utf8');
+const packageManifest = JSON.parse(
+  await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+);
+const workflow = await readFile(
+  new URL('../.github/workflows/repository-contract.yml', import.meta.url),
+  'utf8',
+);
 
 test('QA manifest includes the core workflow scenarios', () => {
   assert.equal(manifest.length, 5, 'expected five documented browser scenarios');
@@ -39,4 +46,38 @@ test('backend source retains key acceptance and resubmission guards', () => {
   assert.match(backend, /criteriaChecks\.length !== acceptanceCriteria\.length/);
   assert.match(backend, /status === 'accepted' && !criteriaChecks\.every\(Boolean\)/);
   assert.match(backend, /record: \{ xp: increment\(50\), acceptedCount: increment\(1\) \}/);
+});
+
+
+test('package exposes a dependency-free contract test command', () => {
+  assert.equal(packageManifest.private, true);
+  assert.equal(packageManifest.type, 'module');
+  assert.equal(
+    packageManifest.scripts['test:contract'],
+    'node --test tests/repository-contract.test.mjs',
+  );
+});
+
+test('CI workflow has least privilege, immutable actions, and bounded execution', () => {
+  assert.match(workflow, /^permissions:\n  contents: read$/m);
+  assert.match(workflow, /^concurrency:/m);
+  assert.match(workflow, /cancel-in-progress: true/);
+  assert.match(workflow, /timeout-minutes: 10/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /^  pull_request:/m);
+  assert.match(workflow, /^  workflow_dispatch:/m);
+  assert.doesNotMatch(workflow, /pull_request_target/);
+  assert.doesNotMatch(workflow, /secrets\./);
+
+  const actionRefs = [...workflow.matchAll(/^\s*uses:\s*([^\s]+)/gm)]
+    .map((match) => match[1]);
+
+  assert.ok(actionRefs.length >= 2, 'expected checkout and Node setup actions');
+  for (const reference of actionRefs) {
+    assert.match(
+      reference,
+      /@[a-f0-9]{40}$/i,
+      `workflow action must be pinned to a full commit SHA: ${reference}`,
+    );
+  }
 });
