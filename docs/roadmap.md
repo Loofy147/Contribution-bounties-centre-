@@ -31,7 +31,7 @@ Priorities are ordered by risk reduction, not by feature visibility.
 - [x] Import deployed frontend, backend, configuration, and QA manifest.
 - [x] Add a repository-level static contract test and CI workflow.
 - [x] Harden contract CI with minimum permissions, SHA-pinned actions, bounded jobs, concurrency cancellation, and regression tests for its own policy.
-- [x] Add CodeQL JavaScript/TypeScript analysis and weekly Dependabot update automation for npm and GitHub Actions.
+- [x] Add CodeQL JavaScript/TypeScript analysis, read-only Gitleaks secret scanning, and weekly Dependabot update automation for npm and GitHub Actions.
 - [ ] Resolve AppDeploy-provided @appdeploy/client and @appdeploy/sdk dependencies for a reproducible local path.
 - [ ] Commit a lockfile and prove clean-install, type-check, and production-build from a clean checkout.
 - [ ] Establish a verified AppDeploy deployment interface, protected release approval, smoke checks, and rollback before enabling CD.
