@@ -9,6 +9,7 @@
 |---|---|---|---|
 | `.github/workflows/repository-contract.yml` | Pull request, push to main, manual | Static source/QA-manifest contract checks | Type-check, dependency installation, browser flow, live database, or deployment |
 | `.github/workflows/codeql.yml` | Pull request, push to main, weekly schedule, manual | CodeQL static analysis of JavaScript/TypeScript | Runtime authorization correctness, dependency exploitability, or end-to-end behavior |
+| `.github/workflows/secrets-scan.yml` | Pull request, push to main, weekly schedule, manual | Gitleaks scans repository history for hardcoded secrets | Protection against secrets added outside covered refs or already leaked externally; revoke exposed credentials immediately |
 | Dependabot | Weekly schedule | Candidate updates for npm packages and GitHub Actions | That an update is compatible; update PRs still require CI and review |
 
 All workflow actions are pinned to full commit SHAs. The exact release tags are comments for human review; the SHA is the immutable reference. The contract workflow uses read-only repository permissions, explicit job timeouts, concurrency cancellation, and checkout without persisted credentials.
@@ -35,6 +36,7 @@ Do not add no-op mocks that make compilation pass while changing production iden
 - Repository contract tests validate the browser QA manifest and critical source invariants.
 - CI's own triggers, permissions, action pins, timeout and concurrency settings are guarded by tests.
 - CodeQL analyzes JavaScript/TypeScript.
+- Gitleaks scans repository history. PR commenting and secret-bearing SARIF artifact uploads are disabled to avoid requiring write access or storing duplicate sensitive reports.
 - Dependabot proposes dependency and workflow updates.
 - Main-branch settings should require appropriate checks after they are stable; settings are not changed by this file.
 
