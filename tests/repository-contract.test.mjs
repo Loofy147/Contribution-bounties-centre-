@@ -93,6 +93,7 @@ test('CI workflow has least privilege, immutable actions, and bounded execution'
 
 
 test('CodeQL is enabled for JavaScript and TypeScript with job-scoped write permission', () => {
+  assert.doesNotMatch(codeqlWorkflow, /\\\\\$\\{\\{/);
   assert.match(codeqlWorkflow, /^  pull_request:/m);
   assert.match(codeqlWorkflow, /^  schedule:/m);
   assert.match(codeqlWorkflow, /languages: javascript-typescript/);
