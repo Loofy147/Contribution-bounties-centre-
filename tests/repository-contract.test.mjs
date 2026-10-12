@@ -17,6 +17,10 @@ const codeqlWorkflow = await readFile(
   new URL('../.github/workflows/codeql.yml', import.meta.url),
   'utf8',
 );
+const secretsWorkflow = await readFile(
+  new URL('../.github/workflows/secrets-scan.yml', import.meta.url),
+  'utf8',
+);
 
 test('QA manifest includes the core workflow scenarios', () => {
   assert.equal(manifest.length, 5, 'expected five documented browser scenarios');
@@ -100,6 +104,28 @@ test('CodeQL is enabled for JavaScript and TypeScript with job-scoped write perm
   const actionRefs = [...codeqlWorkflow.matchAll(/^\s*uses:\s*([^\s]+)/gm)]
     .map((match) => match[1]);
   assert.ok(actionRefs.length >= 3, 'expected checkout and CodeQL init/analyze');
+  for (const reference of actionRefs) {
+    assert.match(
+      reference,
+      /@[a-f0-9]{40}$/i,
+      `workflow action must be pinned to a full commit SHA: ${reference}`,
+    );
+  }
+});
+
+
+test('secret scanning is SHA-pinned and does not write comments or publish report artifacts', () => {
+  assert.match(secretsWorkflow, /^permissions:\n  contents: read$/m);
+  assert.match(secretsWorkflow, /^      pull-requests: read$/m);
+  assert.match(secretsWorkflow, /GITLEAKS_ENABLE_COMMENTS: "false"/);
+  assert.match(secretsWorkflow, /GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"/);
+  assert.match(secretsWorkflow, /fetch-depth: 0/);
+  assert.doesNotMatch(secretsWorkflow, /pull_request_target/);
+  assert.doesNotMatch(secretsWorkflow, /pull-requests:\s*write/);
+
+  const actionRefs = [...secretsWorkflow.matchAll(/^\s*uses:\s*([^\s]+)/gm)]
+    .map((match) => match[1]);
+  assert.ok(actionRefs.length >= 2, 'expected checkout and Gitleaks actions');
   for (const reference of actionRefs) {
     assert.match(
       reference,
