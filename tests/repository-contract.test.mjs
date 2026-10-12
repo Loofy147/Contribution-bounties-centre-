@@ -29,8 +29,9 @@ test('QA manifest includes the core workflow scenarios', () => {
 
 test('backend source retains key acceptance and resubmission guards', () => {
   assert.match(backend, /'POST \/api\/bounties': \[\s*requireAuth\(\)/);
-  assert.match(backend, /acceptanceCriteria\.length < 2 \|\| acceptanceCriteria\.length > 10/);
+  assert.match(backend, /acceptanceCriteria\.length < 1 \|\| acceptanceCriteria\.length > 10/);
   assert.match(backend, /new Set\(acceptanceCriteria\.map\(item => item\.toLowerCase\(\)\)\)\.size !== acceptanceCriteria\.length/);
+  assert.match(backend, /Provide between 1 and 10 acceptance criteria/);
   assert.match(backend, /acceptanceCriteria: \[\.\.\.acceptanceCriteria\]/);
   assert.match(backend, /'POST \/api\/contributions\/:id\/resubmit': \[\s*requireAuth\(\)/);
   assert.match(backend, /contribution\.submitterId !== user\.userId/);
