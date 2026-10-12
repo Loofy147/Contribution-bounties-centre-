@@ -1,42 +1,47 @@
 # Contributions Centre
 
-**Contributions Centre** is a platform concept for discovering, organizing, reviewing, and rewarding useful contributions across different kinds of work. **ContribQuest** is the current live prototype.
+Contributions Centre is a platform for defining useful work, making contributions, reviewing outcomes against explicit acceptance criteria, and building a traceable record of accepted work. **ContribQuest** is the current live prototype.
 
 - **Live prototype:** https://contribquest-lygj1x.v2.appdeploy.ai/
 - **Canonical repository:** https://github.com/Loofy147/Contribution-bounties-centre-
+- **Imported deployed source snapshot:** AppDeploy version 1791833721555
 
-## Current product model
+## What's in this repository
 
-The prototype models bounties with explicit acceptance criteria and submissions tied to a snapshot of those criteria. Bounty owners review submissions against each criterion and provide written rationale. A submission can be accepted, rejected, or sent back for changes; contributors can revise and resubmit work that needs changes.
+This repository contains the deployed frontend, backend, configuration, and test manifest. The frontend uses React, Vite, TypeScript, and Lucide icons. Its backend imports the platform-provided @appdeploy/sdk; the frontend imports @appdeploy/client.
 
-The prototype also increments XP/reputation on acceptance. XP is a platform signal, not a verified measure of real-world ability. Paid offers, where shown, are listings only: the prototype does not provide escrow, payment processing, or a guaranteed payout.
+**Runtime caveat:** these AppDeploy integration packages are not declared in the checked-in package.json. This source snapshot has not yet been demonstrated to build or run independently outside AppDeploy. Do not treat the source import as proof of a reproducible self-hosted deployment.
 
-## Product principles
+## Product model
 
-1. **Outcomes over activity.** Reward useful, reviewable deliverables rather than clicks, time spent, or unsupported claims.
-2. **Explicit acceptance.** Define observable acceptance criteria before work begins.
-3. **Evidence and rationale.** Submissions need a written explanation and may include a supporting URL. Reviews record criterion checks and written reasoning.
-4. **Auditable workflow.** Preserve state transitions, review history, and revised submission versions.
-5. **Server-side enforcement.** Authorization and consequential state changes must be validated on the server, not only in the browser.
-6. **Honest reputation.** Distinguish platform points from independently demonstrated competence.
+Bounties define between 2 and 10 distinct acceptance criteria. A contribution preserves a snapshot of the criteria against which it will be reviewed. Owners record a pass/fail value for every criterion and written rationale; acceptance is blocked unless every criterion passes. Work may be accepted, rejected, or returned for changes. The original contributor can revise and resubmit work returned for changes, while revision and review history are preserved.
 
-## Engineering status
+Acceptance currently grants 50 platform XP and increments an accepted-work counter. XP is not an independently validated measure of skill. Paid bounty entries are listings only; this prototype does not implement escrow, payment processing, or guaranteed payouts.
 
-The live prototype is deployed on AppDeploy and uses platform-provided runtime dependencies. This repository is being established as the canonical engineering home. It has not yet been verified as independently buildable or self-hostable from repository contents alone; runtime dependencies and deployment instructions must be confirmed before claiming a reproducible standalone build.
+## Repository guidance
 
-A small test manifest exists in the deployed prototype for acceptance-criteria and workflow scenarios. Those checks are not a substitute for live end-to-end testing with separate contributor and bounty-owner accounts.
+- [Architecture and runtime boundaries](docs/architecture.md)
+- [Acceptance protocol](docs/acceptance-protocol.md)
+- [Engineering decisions](docs/decisions.md)
+- [Roadmap and verification gates](docs/roadmap.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security reporting](SECURITY.md)
 
-## Near-term engineering plan
+## Validation
 
-- Import and version the current deployed frontend, backend, configuration, and test manifest.
-- Document the platform-injected runtime and create a reproducible development/test path.
-- Execute two-account end-to-end tests for submission, change request, resubmission, acceptance, duplicate handling, and unauthorized transitions.
-- Improve evidence handling, auditability, notifications, and payment integration only with explicit security and operational controls.
+The repository contract test uses Node's built-in test runner and checks the QA manifest plus selected source-level invariants. It is a static regression guard, **not** an end-to-end test of the running application.
+
+Run it with: node --test tests/repository-contract.test.mjs
+
+The AppDeploy test manifest at tests/tests.json describes five browser scenarios. These scenarios still require live execution with separate contributor and bounty-owner accounts before the workflow can be considered end-to-end verified.
+
+## Initial verification priorities
+
+1. Reproduce the deployed build outside the platform by resolving and documenting the AppDeploy SDK/client dependencies.
+2. Run the five browser scenarios against the deployed application using independent owner and contributor identities.
+3. Verify authorization, state transitions, review history, and exactly-once XP behavior in real persisted data.
+4. Address evidence uploads, notifications, payout controls, abuse resistance, and operational monitoring before making production-readiness claims.
 
 ## License
 
-No open-source license has been selected. Public visibility does not by itself grant permission to reuse, modify, or redistribute the project. Choose a license deliberately before presenting this as licensed open source.
-
-## Status and claims
-
-This is an evolving prototype. Treat features described here as implemented only to the extent verified in source and the running application. Security, payout, identity, and production-readiness claims require dedicated testing and review.
+No license has been selected. Public visibility does not by itself grant permission to reuse, modify, or redistribute this code. Do not treat this repository as open-source licensed until the project owner chooses and adds a license.

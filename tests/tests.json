@@ -1,0 +1,100 @@
+[
+  {
+    "name": "Browse bounties and inspect the acceptance contract",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": [
+      "public bounty board",
+      "acceptance criteria preview",
+      "mixed contribution categories"
+    ],
+    "description": "Verifies visitors can inspect a bounty's acceptance criteria before attempting work.",
+    "steps": [
+      "Open the app",
+      "Choose Explore bounties",
+      "Open a bounty card and inspect its acceptance criteria"
+    ],
+    "expected": "The board shows the agreed checks on the bounty, so contributors can understand what the owner will review before submitting."
+  },
+  {
+    "name": "Create a bounty with validated acceptance criteria",
+    "viewport": "desktop",
+    "covers": [
+      "acceptance criteria input",
+      "2-to-10 unique criterion validation",
+      "authenticated bounty creation",
+      "persistence after refresh"
+    ],
+    "description": "Verifies bounty creation requires a clear, non-duplicated contract of 2–10 acceptance criteria and retains it.",
+    "steps": [
+      "Sign in",
+      "Choose Post a bounty",
+      "Enter a valid title, description, category and reward",
+      "Enter two different acceptance criteria, one per line",
+      "Publish and refresh the board"
+    ],
+    "expected": "The bounty is published and its acceptance criteria remain visible. A bounty with fewer than two criteria or duplicate criteria is rejected."
+  },
+  {
+    "name": "Submit work against a snapshot of agreed criteria",
+    "viewport": "desktop",
+    "covers": [
+      "contribution submission",
+      "acceptance criteria snapshot",
+      "written and linked evidence",
+      "My contributions persistence"
+    ],
+    "description": "Verifies submitted work is linked to the exact acceptance criteria agreed when the submission was made.",
+    "steps": [
+      "Sign in as a contributor who does not own an open community bounty",
+      "Open a live bounty and read the acceptance criteria",
+      "Submit a written explanation and optionally add an evidence link",
+      "Open My contributions and refresh"
+    ],
+    "expected": "The submission is pending review and retains the bounty's acceptance criteria snapshot."
+  },
+  {
+    "name": "Request changes, revise, and accept only the compliant version",
+    "viewport": "desktop",
+    "covers": [
+      "owner-only review rationale",
+      "changes-requested transition",
+      "contributor-only resubmission endpoint",
+      "duplicate resubmission prevention",
+      "revision history",
+      "visible prior review history",
+      "acceptance checklist",
+      "single XP award"
+    ],
+    "description": "Verifies the changes-requested cycle can produce a new submission version without losing prior review evidence or awarding XP twice.",
+    "steps": [
+      "Owner requests changes and records which criteria are not yet met plus a written rationale",
+      "Original contributor opens My contributions and selects Revise & resubmit",
+      "Contributor updates the explanation or evidence and resubmits",
+      "Owner reviews the pending new version, sees the prior review event, checks every criterion, writes a rationale, and accepts",
+      "Refresh both views"
+    ],
+    "expected": "Version 2 returns to pending, revision 1 and the earlier review stay in history, a second independent submission is blocked while changes are requested, final acceptance records the passing checklist, and the contributor gains exactly 50 XP once."
+  },
+  {
+    "name": "Reject unauthorized and incomplete acceptance transitions",
+    "viewport": "mobile",
+    "covers": [
+      "criteria validation",
+      "review rationale validation",
+      "server-side acceptance checklist",
+      "submission ownership",
+      "resubmission status guard",
+      "duplicate submission guard"
+    ],
+    "description": "Verifies invalid acceptance data and unauthorized, duplicate, or out-of-order resubmissions are blocked by the backend.",
+    "steps": [
+      "Attempt to publish a bounty with only one or duplicated acceptance criteria",
+      "Attempt to accept work with a criterion still marked false or a rationale shorter than 15 characters",
+      "As someone other than the submitter, attempt to resubmit a changes-requested contribution",
+      "Try to create a second submission for a bounty where the existing submission has changes requested",
+      "Try to resubmit a contribution that is not in changes-requested status"
+    ],
+    "expected": "Invalid bounty and review data is rejected, only the original submitter can resubmit a changes-requested contribution, a second submission is blocked, and no invalid request awards XP."
+  }
+]
