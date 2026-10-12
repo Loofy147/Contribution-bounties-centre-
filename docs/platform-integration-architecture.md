@@ -11,6 +11,8 @@ The app uses AppDeploy authentication and its key-value/table database. Current 
 
 The AppDeploy SDK supports backend-only encrypted app secrets, bounded database operations, conditional patches, transactions, and atomic increments. The current app has no configured backend secrets. No GitHub App connection and no Network MCP server are implemented.
 
+The separate [`contribution-cloud/Contributions-centre`](https://github.com/contribution-cloud/Contributions-centre) is reserved for the future portfolio/repository control plane and is not currently integrated with this app. Keep active development in the two `Loofy147` repositories until the readiness gates in the strategic first-consumer charter are met. The GitHub accounts are distinct authorization boundaries; no access or synchronization between them should be assumed.
+
 ## Required identity distinction
 
 - AppDeploy auth identifies the signed-in Network user.
