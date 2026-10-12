@@ -317,8 +317,8 @@ export const handler = router({
           400
         );
       if (!category) return error('Choose a bounty category.', 400);
-      if (acceptanceCriteria.length < 2 || acceptanceCriteria.length > 10)
-        return error('Provide between 2 and 10 acceptance criteria, one per line.', 400);
+      if (acceptanceCriteria.length < 1 || acceptanceCriteria.length > 10)
+        return error('Provide between 1 and 10 acceptance criteria, one per line.', 400);
       if (acceptanceCriteria.some(item => item.length < 5 || item.length > 240))
         return error('Each acceptance criterion must be between 5 and 240 characters.', 400);
       if (new Set(acceptanceCriteria.map(item => item.toLowerCase())).size !== acceptanceCriteria.length)
