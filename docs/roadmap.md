@@ -70,3 +70,19 @@ Priorities are ordered by risk reduction, not by feature visibility.
 ## Initial-baseline non-goal
 
 Do not add more reward mechanics before acceptance enforcement, identity, auditability, and exactly-once state changes have been tested against the running backend.
+
+## Deferred — future portfolio control-plane handover
+
+**Status: blocked; not part of the current working location.** The separate [`contribution-cloud/Contributions-centre`](https://github.com/contribution-cloud/Contributions-centre) is intended to become the portfolio/repository inventory and management hub only after this system has been completed and verified to the readiness gate defined by the [strategic charter](https://github.com/Loofy147/contribution-network/blob/main/docs/10-first-consumer-project-charter.md). Do not initialize it, migrate current work to it, or mark it as an integration dependency before that gate passes.
+
+Handover evidence to collect before changing this status:
+- [ ] A reproducible build and documented runtime/setup path with a known-good test result.
+- [ ] Live end-to-end verification of core contribution, review, revision and exactly-once XP transitions.
+- [ ] Identity, project/workspace authorization and negative cross-project isolation tests.
+- [ ] Credential/API controls tested for least privilege, scope/audience validation, expiry, rotation and revocation.
+- [ ] GitHub connection restricted to selected repositories; any enabled repository-create/write operations tested with preview, confirmation, idempotency and failure handling.
+- [ ] Security-relevant audit events, recovery/rollback and secret-free logging verified.
+- [ ] Strategic, application and operational documentation reconciled with observed implementation; unresolved risks recorded.
+- [ ] An explicit handover decision recorded before the central repository is initialized or used.
+
+These are unchecked readiness requirements, not claims about existing implementation. Until the gate passes, continue working in the current `Loofy147` repositories.
