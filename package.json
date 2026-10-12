@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:contract": "node --test tests/repository-contract.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
