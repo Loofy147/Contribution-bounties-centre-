@@ -6,6 +6,10 @@ The source in this repository was read from AppDeploy application contribquest-l
 
 This is a source snapshot, not a claim that the repository independently reproduces the deployed runtime byte-for-byte.
 
+## Portfolio relationship
+
+This repository contains the initial application prototype for the [Contribution Network](https://github.com/Loofy147/contribution-network). The Network itself is the first real project and first-consumer use case. The strategic contract is maintained in the [First-Consumer Project Charter](https://github.com/Loofy147/contribution-network/blob/main/docs/10-first-consumer-project-charter.md); this repository implements only the workflows that are present and tested here. Do not assume founder self-contribution XP, verification-level labeling, or multi-project isolation is fully implemented merely because it is described in the charter.
+
 ## Components
 
 - src/App.tsx: React application, UI state, forms, review flows, and calls through @appdeploy/client.
@@ -35,12 +39,12 @@ Review events retain reviewer identity, timestamp, rationale, criteria checks, a
 
 ## Contribution lifecycle
 
-1. An authenticated owner publishes a bounty with 2–10 distinct criteria.
+1. An authenticated owner publishes a bounty with 1–10 distinct criteria. One criterion is acceptable for a narrow task; broader scope should be split where practical.
 2. A contributor submits an explanation and optional evidence URL. The contribution stores the criteria in force at submission time.
 3. The owner reviews the contribution and records a rationale and one Boolean check for every stored criterion.
 4. The owner accepts, rejects, or requests changes. Acceptance requires all checks to pass.
 5. Only the original contributor may resubmit a needs-changes contribution. Resubmission creates a new revision and returns it to pending review.
-6. Acceptance updates the contribution/bounty workflow and awards platform XP.
+6. Acceptance updates the contribution/bounty workflow and awards platform XP. The current 50 XP award is a prototype rule, not money or a verified credential.
 
 Server validation is consequential: UI controls alone are not the security boundary. This document describes source-level logic; live integration tests are still required to validate identity, persistence, race handling, and exactly-once side effects in the deployed environment.
 
