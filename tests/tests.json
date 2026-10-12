@@ -21,19 +21,19 @@
     "viewport": "desktop",
     "covers": [
       "acceptance criteria input",
-      "2-to-10 unique criterion validation",
+      "1-to-10 unique criterion validation",
       "authenticated bounty creation",
       "persistence after refresh"
     ],
-    "description": "Verifies bounty creation requires a clear, non-duplicated contract of 2–10 acceptance criteria and retains it.",
+    "description": "Verifies bounty creation permits one clear criterion for a narrow task, supports multiple criteria when needed, and retains a unique contract of 1–10 checks.",
     "steps": [
       "Sign in",
       "Choose Post a bounty",
       "Enter a valid title, description, category and reward",
-      "Enter two different acceptance criteria, one per line",
+      "Enter one clear acceptance criterion, or add more checks if the scope needs them",
       "Publish and refresh the board"
     ],
-    "expected": "The bounty is published and its acceptance criteria remain visible. A bounty with fewer than two criteria or duplicate criteria is rejected."
+    "expected": "The bounty is published and its acceptance criteria remain visible. A bounty with one valid criterion is published; empty, too-short, duplicated, and over-limit criteria are rejected."
   },
   {
     "name": "Submit work against a snapshot of agreed criteria",
@@ -89,12 +89,12 @@
     ],
     "description": "Verifies invalid acceptance data and unauthorized, duplicate, or out-of-order resubmissions are blocked by the backend.",
     "steps": [
-      "Attempt to publish a bounty with only one or duplicated acceptance criteria",
+      "Publish a bounty with one valid criterion, then attempt empty, too-short, duplicated, and more-than-ten criterion lists",
       "Attempt to accept work with a criterion still marked false or a rationale shorter than 15 characters",
       "As someone other than the submitter, attempt to resubmit a changes-requested contribution",
       "Try to create a second submission for a bounty where the existing submission has changes requested",
       "Try to resubmit a contribution that is not in changes-requested status"
     ],
-    "expected": "Invalid bounty and review data is rejected, only the original submitter can resubmit a changes-requested contribution, a second submission is blocked, and no invalid request awards XP."
+    "expected": "One clear criterion is allowed; empty, too-short, duplicated, or more-than-ten criteria are rejected. Review and ownership guards remain enforced, and invalid requests award no XP."
   }
 ]
