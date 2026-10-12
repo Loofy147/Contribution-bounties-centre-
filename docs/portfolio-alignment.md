@@ -7,6 +7,7 @@
 
 - **Strategic source of truth:** [Contribution Network](https://github.com/Loofy147/contribution-network)
 - **Portfolio charter:** [First-Consumer Project Charter](https://github.com/Loofy147/contribution-network/blob/main/docs/10-first-consumer-project-charter.md)
+- **Shared engineering architecture:** [Engineering Primitives and Integration Architecture](https://github.com/Loofy147/contribution-network/blob/main/docs/11-engineering-primitives.md)
 - **Application prototype:** this repository, [Contribution Bounties Centre](https://github.com/Loofy147/Contribution-bounties-centre-)
 - **Live prototype:** https://contribquest-lygj1x.v2.appdeploy.ai/
 
