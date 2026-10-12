@@ -1714,14 +1714,13 @@ function App() {
                   Acceptance criteria (one per line)
                   <textarea
                     required
-                    minLength={30}
                     maxLength={1800}
                     rows={4}
                     value={bountyForm.acceptanceCriteria}
                     onChange={event => setBountyForm({ ...bountyForm, acceptanceCriteria: event.target.value })}
                     placeholder="The deliverable meets the agreed objective.\nAll requested items are included.\nThe result can be reviewed or reproduced."
                   />
-                  <small className="field-hint">Use 2–10 observable checks. Reviewers must mark every criterion as met before accepting the work.</small>
+                  <small className="field-hint">Use 1–10 observable checks. One strong criterion is enough for a narrow task; split broader work into smaller packages. Every criterion must pass before acceptance.</small>
                 </label>
                 <label>
                   Reference link (optional)
