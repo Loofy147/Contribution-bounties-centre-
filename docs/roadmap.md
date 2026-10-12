@@ -2,6 +2,16 @@
 
 Priorities are ordered by risk reduction, not by feature visibility.
 
+## P0 — Portfolio contract and first-consumer alignment
+
+- [x] Record the Network as the first real project and first-consumer use case in the strategic charter.
+- [x] Link this application to the [portfolio charter](https://github.com/Loofy147/contribution-network/blob/main/docs/10-first-consumer-project-charter.md).
+- [x] Align acceptance criteria so one clear criterion can be sufficient.
+- [ ] Implement founder self-contribution records and explicit verification levels without allowing XP to bypass safety/release gates.
+- [ ] Add the minimum project identity and access boundaries needed before unrelated community projects share the instance.
+
+**Exit gate:** documentation and UI/backend policy agree; founder work can be traced to evidence without falsely claiming independent review or app-issued XP; project data is isolated before multi-project/community onboarding.
+
 ## P0 — Reproducible engineering baseline
 
 - [x] Create a canonical repository and document the product/runtime boundary.
@@ -17,9 +27,9 @@ Priorities are ordered by risk reduction, not by feature visibility.
 
 - [ ] Run the browser QA manifest against the live deployment with separate owner and contributor accounts.
 - [ ] Prove unauthorized owners cannot review submissions and non-owners cannot resubmit another contributor's work.
-- [ ] Prove incomplete criteria checklists cannot be accepted through the UI or direct API requests.
+- [ ] Prove empty, malformed, duplicated, over-limit, or incomplete criteria/checklists are rejected through the UI and direct API requests; verify a single valid criterion can be accepted.
 - [ ] Test duplicate submission and repeated review/resubmission paths.
-- [ ] Verify XP is awarded once only, including concurrent and retried requests.
+- [ ] Verify XP is awarded once only, including concurrent and retried requests; cover self-contribution separately only after that workflow is implemented.
 - [ ] Verify history and bounty state remain consistent after failures and refreshes.
 
 **Exit gate:** traces and persisted-state checks support the claims; a green UI smoke test alone is insufficient.
