@@ -4,7 +4,7 @@ The acceptance protocol reduces ambiguity before work starts and makes review de
 
 ## 1. Define the contract before work begins
 
-Every bounty must contain 2–10 criteria, one per line. Criteria should be observable, specific, appropriately scoped, and reviewable from evidence. Avoid subjective terms such as “great,” “professional,” or “high quality” without a measurable definition. Keep criteria independent where practical.
+Every bounty must contain 1–10 criteria, one per line. One clear, verifiable criterion is sufficient for a narrow task; use more only when the scope requires them. The limit of 10 keeps a single review contract manageable—split broader work into smaller work packages. Criteria should be observable, specific, appropriately scoped, and reviewable from evidence. Avoid subjective terms such as “great,” “professional,” or “high quality” without a measurable definition. Keep criteria independent where practical.
 
 Weak: “Improve the UI.”
 
@@ -36,4 +36,8 @@ Criteria should not be changed retroactively to reject a submission. Review agai
 
 ## 6. Reputation and payment are distinct
 
-The current app awards 50 XP and increments an accepted-work count on acceptance. These counters do not independently prove skill, identity, impact, or work quality. The prototype does not escrow funds or execute payouts. A bounty that promises money requires a separate payment process and appropriate security, legal, and operational controls.
+The current app awards 50 XP and increments an accepted-work count on acceptance. These counters do not independently prove skill, identity, impact, or work quality. Founder contributions are eligible under the portfolio charter, but the running app does not yet implement the full self-contribution and verification-level workflow; use GitHub issues/PRs and evidence as the interim record. The prototype does not escrow funds or execute payouts. A bounty that promises money requires a separate payment process and appropriate security, legal, and operational controls.
+
+## 7. Verification strength must be explicit
+
+The author, reviewer, approver, and payout authority are distinct roles even if one person temporarily fills more than one. Self-checked low-risk work may be recorded as self-verified where the project's rules allow it, but must not be described as independently reviewed. Automated checks prove only the checks that actually ran. Security-sensitive changes, production releases, financial operations, and access-control changes require stronger gates and independent review where available.
