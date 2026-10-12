@@ -6,6 +6,12 @@ Contributions Centre is the initial application prototype for the [Contribution 
 - **Canonical repository:** https://github.com/Loofy147/Contribution-bounties-centre-
 - **Imported deployed source snapshot:** AppDeploy version 1791833721555
 
+## Current working boundary
+
+Active development stays in this repository and the [strategic Contribution Network repository](https://github.com/Loofy147/contribution-network). The separate [`contribution-cloud/Contributions-centre`](https://github.com/contribution-cloud/Contributions-centre) is reserved as the future portfolio/repository control plane. It is **not** this application's current runtime or an active implementation dependency, and it must remain untouched until the system passes the readiness gates in the [first-consumer charter](https://github.com/Loofy147/contribution-network/blob/main/docs/10-first-consumer-project-charter.md).
+
+The two GitHub accounts are separate authorization boundaries. A connection or permission in one does not imply access through the other.
+
 ## What's in this repository
 
 This repository contains the deployed frontend, backend, configuration, and test manifest. The frontend uses React, Vite, TypeScript, and Lucide icons. Its backend imports the platform-provided @appdeploy/sdk; the frontend imports @appdeploy/client.
