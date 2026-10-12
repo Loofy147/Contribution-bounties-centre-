@@ -70,6 +70,7 @@ test('CI workflow has least privilege, immutable actions, and bounded execution'
   assert.match(workflow, /^permissions:\n  contents: read$/m);
   assert.match(workflow, /^concurrency:/m);
   assert.match(workflow, /cancel-in-progress: true/);
+  assert.doesNotMatch(workflow, /\\\\\$\\{\\{/);
   assert.match(workflow, /timeout-minutes: 10/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /^  pull_request:/m);
