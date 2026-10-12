@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions should improve verified outcomes, reliability, security, usability, or documentation. A merged change does not by itself prove the intended outcome was achieved; changes should include a way to inspect or test the result.
+Contributions should improve verified outcomes, reliability, security, usability, or documentation. A merged change does not by itself prove the intended outcome was achieved; changes should include a way to inspect or test the result. This repository is the application prototype for the [Contribution Network](https://github.com/Loofy147/contribution-network); portfolio-level policy is defined in its [First-Consumer Project Charter](https://github.com/Loofy147/contribution-network/blob/main/docs/10-first-consumer-project-charter.md).
 
 ## Before opening a pull request
 
@@ -28,4 +28,6 @@ Include the problem, the change, observable acceptance checks, exact verificatio
 - Use server-side validation for permissions and consequential transitions.
 - Avoid undocumented status changes and hidden reputation side effects.
 - Do not imply that points equal payment or verified skill.
+- Distinguish self-verification, independent review, and automated checks; state which actually occurred.
+- For founder/internal work before self-contribution XP is implemented, link GitHub issue/PR evidence and do not claim the app awarded XP.
 - Update architecture/decision docs when behavior or boundaries materially change.
