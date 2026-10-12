@@ -202,7 +202,7 @@ function App() {
     category: 'General / Other',
     skills: 'Any relevant skills',
     repoUrl: '',
-    acceptanceCriteria: 'Deliverable meets the stated objective.\nResult is complete and can be reviewed against the agreed scope.',
+    acceptanceCriteria: 'The deliverable matches the agreed scope and includes inspectable evidence.',
     tier: 'community',
     minAccepted: '2',
   });
@@ -347,7 +347,7 @@ function App() {
         category: 'General / Other',
         skills: 'Any relevant skills',
         repoUrl: '',
-        acceptanceCriteria: 'Deliverable meets the stated objective.\nResult is complete and can be reviewed against the agreed scope.',
+        acceptanceCriteria: 'The deliverable matches the agreed scope and includes inspectable evidence.',
         tier: 'community',
         minAccepted: '2',
       });
@@ -1718,7 +1718,7 @@ function App() {
                     rows={4}
                     value={bountyForm.acceptanceCriteria}
                     onChange={event => setBountyForm({ ...bountyForm, acceptanceCriteria: event.target.value })}
-                    placeholder="The deliverable meets the agreed objective.\nAll requested items are included.\nThe result can be reviewed or reproduced."
+                    placeholder="The result matches the agreed scope and can be inspected."
                   />
                   <small className="field-hint">Use 1–10 observable checks. One strong criterion is enough for a narrow task; split broader work into smaller packages. Every criterion must pass before acceptance.</small>
                 </label>
