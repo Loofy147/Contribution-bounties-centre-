@@ -12,6 +12,19 @@ Priorities are ordered by risk reduction, not by feature visibility.
 
 **Exit gate:** documentation and UI/backend policy agree; founder work can be traced to evidence without falsely claiming independent review or app-issued XP; project data is isolated before multi-project/community onboarding.
 
+## P0 — Integration and data boundaries
+
+- [x] Document GitHub App, MCP, database, secret-management, and authorization boundaries.
+- [ ] Register a GitHub App with minimal read permissions; configure callback and secrets through the secure secret flow.
+- [ ] Implement a read-only Connect GitHub flow with state validation, selected-repository linking, permission display, and disconnect/revocation behavior.
+- [ ] Replace growing global list-and-filter access patterns with project/user-scoped lookup paths before unrelated projects are onboarded.
+- [ ] Add workspace/project memberships and negative cross-project authorization tests.
+- [ ] Define an append-only audit/event contract and idempotent XP ledger/replay handling.
+- [ ] Specify MCP tool schemas and authorization. Implement read-only tools only after shared domain services and project scope checks exist.
+- [ ] Verify secrets are never exposed in frontend bundles, ordinary records, API responses, or logs.
+
+**Exit gate:** GitHub access is limited to selected repositories; cross-project access is denied; database mutations are auditable and idempotent; MCP is not claimed as connected until transport and authorization tests pass.
+
 ## P0 — Reproducible engineering baseline
 
 - [x] Create a canonical repository and document the product/runtime boundary.
