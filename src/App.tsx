@@ -113,6 +113,21 @@ type WorkspaceMembership = {
   role: 'workspace_admin' | 'reviewer' | 'contributor' | 'observer';
   createdAt: string;
 };
+type GitHubOAuthState = {
+  id: string; appUserId: string; purpose: 'identity_link';
+  status: 'pending' | 'processing' | 'consumed' | 'failed' | 'cancelled';
+  createdAt: string; expiresAt: string;
+};
+
+type GitHubDeviceSession = {
+  flowId: string;
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  expiresAt: number;
+  intervalSeconds: number;
+};
+
 type AccountSecurity = {
   account: { userId: string; email?: string; displayName: string };
   access: { roles: string[]; platformOwnerConfigured: boolean; isPlatformOwner: boolean;
@@ -243,6 +258,7 @@ function App() {
   const [memberEmail, setMemberEmail] = useState('');
   const [memberRole, setMemberRole] = useState<'workspace_admin' | 'reviewer' | 'contributor' | 'observer'>('contributor');
   const [githubLoginHint, setGithubLoginHint] = useState('');
+  const [githubDeviceSession, setGithubDeviceSession] = useState<GitHubDeviceSession | null>(null);
 
   const getReviewDraft = (item: Contribution): ReviewDraft =>
     reviewDrafts[item.id] ?? {
@@ -331,6 +347,55 @@ function App() {
     if (user && view === 'Account & integrations') void refreshSecurity();
     if (!user) { setSecurityState(null); setWorkspaceMembers([]); }
   }, [user?.userId, view, selectedWorkspaceId]);
+
+  useEffect(() => {
+    const session = githubDeviceSession;
+    if (!session || !user) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      try {
+        const response = await api.post('/api/integrations/github/device/poll', {
+          flowId: session.flowId,
+          deviceCode: session.deviceCode,
+        });
+        if (stopped) return;
+        const result = response.data as { status?: string; intervalSeconds?: number; message?: string };
+        if (result.status === 'pending') {
+          const nextInterval = typeof result.intervalSeconds === 'number'
+            ? Math.max(5, result.intervalSeconds)
+            : session.intervalSeconds;
+          if (nextInterval !== session.intervalSeconds) {
+            setGithubDeviceSession(current => current?.flowId === session.flowId
+              ? { ...current, intervalSeconds: nextInterval } : current);
+            return;
+          }
+          timer = setTimeout(() => void poll(), nextInterval * 1000);
+          return;
+        }
+        setGithubDeviceSession(null);
+        setSecurityBusy(false);
+        if (result.status === 'linked') {
+          await refreshSecurity();
+          showToast('GitHub identity linked to this existing ContribQuest account.');
+        } else {
+          setError(result.message || 'GitHub device authorization did not complete. Start a new connection.');
+        }
+      } catch (err) {
+        if (stopped) return;
+        setGithubDeviceSession(null);
+        setSecurityBusy(false);
+        setError(errorText(err));
+      }
+    };
+
+    timer = setTimeout(() => void poll(), Math.max(5, session.intervalSeconds) * 1000);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [githubDeviceSession, user?.userId]);
 
   const acceptedCount = work.profile?.acceptedCount ?? 0;
   const xp = work.profile?.xp ?? 0;
@@ -432,6 +497,37 @@ function App() {
       }
       window.location.assign(url);
     } catch (err) { setError(errorText(err)); setSecurityBusy(false); }
+  };
+
+  const startGitHubDeviceConnection = async () => {
+    setSecurityBusy(true);
+    setError('');
+    setGithubDeviceSession(null);
+    try {
+      const response = await api.post('/api/integrations/github/device/start', {});
+      const flow = response.data as {
+        flowId?: string; deviceCode?: string; userCode?: string; verificationUri?: string;
+        expiresIn?: number; intervalSeconds?: number;
+      };
+      if (!flow.flowId || !flow.deviceCode || !flow.userCode ||
+          flow.verificationUri !== 'https://github.com/login/device' ||
+          typeof flow.expiresIn !== 'number' || typeof flow.intervalSeconds !== 'number') {
+        throw new Error('ContribQuest did not return a valid GitHub device code.');
+      }
+      setGithubDeviceSession({
+        flowId: flow.flowId,
+        deviceCode: flow.deviceCode,
+        userCode: flow.userCode,
+        verificationUri: flow.verificationUri,
+        expiresAt: Date.now() + flow.expiresIn * 1000,
+        intervalSeconds: flow.intervalSeconds,
+      });
+      showToast('Device code ready. Open GitHub, enter the code and authorize ContribQuest.');
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setSecurityBusy(false);
+    }
   };
 
   const disconnectGitHub = async () => {
@@ -1612,8 +1708,19 @@ function App() {
               <p className="settings-footnote">Enter the GitHub username that owns the repositories, not its email address. Leave blank to choose an account at GitHub. Your ContribQuest email can be different; after authorization, verified GitHub email addresses are shown separately.</p>
             </div>
             {!settings?.github.configured && <div className="settings-notice"><Activity size={17}/><span>Register a GitHub App using the exact callback URL. Then set <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code> through AppDeploy secure backend-secret entry. Never paste credentials into chat or source.</span></div>}
-            <button className="button button-dark" disabled={securityBusy || !settings?.github.configured} onClick={() => void startGitHubConnection()}>{securityBusy?'Preparing…':'Connect GitHub identity'} <ArrowUpRight size={15}/></button>
-            <p className="settings-footnote">A short-lived one-time state is tied to this signed-in ContribQuest user. The temporary GitHub token is not saved as an ordinary database record.</p>
+            <div className="github-connect-actions">
+              <button className="button button-dark" disabled={securityBusy || Boolean(githubDeviceSession) || !settings?.github.configured} onClick={() => void startGitHubConnection()}>{securityBusy && !githubDeviceSession?'Preparing…':'Connect GitHub identity'} <ArrowUpRight size={15}/></button>
+              <button className="button button-muted" disabled={securityBusy || Boolean(githubDeviceSession) || !settings?.github.clientIdConfigured} onClick={() => void startGitHubDeviceConnection()}>Use device code instead <ShieldCheck size={15}/></button>
+            </div>
+            {githubDeviceSession && <div className="github-device-flow">
+              <strong>Authorize the intended GitHub account</strong>
+              <p>Open GitHub in your phone browser, sign in as <code>{githubLoginHint.trim().replace(/^@/, '') || 'the account that owns your repositories'}</code>, then enter this one-time code:</p>
+              <div className="github-device-code">{githubDeviceSession.userCode}</div>
+              <a href={githubDeviceSession.verificationUri} target="_blank" rel="noreferrer">Open GitHub device authorization <ExternalLink size={14}/></a>
+              <p className="settings-footnote">Keep this ContribQuest page open. Authorization is checked automatically. The code expires at {new Date(githubDeviceSession.expiresAt).toLocaleTimeString()}.</p>
+              <button className="button button-muted" onClick={() => { setGithubDeviceSession(null); setSecurityBusy(false); }}>Cancel device authorization</button>
+            </div>}
+            <p className="settings-footnote">The device method avoids the callback redirect. ContribQuest stores only a hash of the temporary device code; the returned access token is never stored in normal app records.</p>
           </>}
         </section>
 
@@ -1890,8 +1997,7 @@ function App() {
               >
                 <X size={19} />
               </button>
-            </div>
-            {modal === 'create' ? (
+            </div>            {modal === 'create' ? (
               <form className="form-stack" onSubmit={createBounty}>
                 <label>
                   Title
@@ -1997,7 +2103,8 @@ function App() {
                     value={bountyForm.repoUrl}
                     onChange={event =>
                       setBountyForm({
-                        ...bountyForm,                        repoUrl: event.target.value,
+                        ...bountyForm,
+                        repoUrl: event.target.value,
                       })
                     }
                     placeholder="Link to a doc, design, demo, repository, or reference"
