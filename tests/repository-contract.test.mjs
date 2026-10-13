@@ -23,7 +23,7 @@ const secretsWorkflow = await readFile(
 );
 
 test('QA manifest includes the core workflow scenarios', () => {
-  assert.equal(manifest.length, 5, 'expected five documented browser scenarios');
+  assert.equal(manifest.length, 6, 'expected six documented browser scenarios');
   assert.equal(
     manifest.filter((item) => item.sanity === true).length,
     1,
@@ -37,6 +37,7 @@ test('QA manifest includes the core workflow scenarios', () => {
     'Submit work against a snapshot of agreed criteria',
     'Request changes, revise, and accept only the compliant version',
     'Reject unauthorized and incomplete acceptance transitions',
+    'Review account roles and GitHub connection prerequisites',
   ]) {
     assert.ok(names.has(required), `missing QA scenario: ${required}`);
   }
