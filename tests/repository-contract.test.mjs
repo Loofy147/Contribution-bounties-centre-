@@ -88,6 +88,33 @@ test('authenticated work views use private per-user indexes and bounded legacy m
   assert.equal(submitRoute.includes("db.list<Contribution>('contributions'"), false);
 });
 
+test('account roles and GitHub identity linking enforce server-side boundaries', () => {
+  for (const route of [
+    "'GET /api/account/security'",
+    "'POST /api/workspaces'",
+    "'GET /api/workspaces/:workspaceId/members'",
+    "'POST /api/access/workspaces/:workspaceId/members'",
+    "'DELETE /api/access/workspaces/:workspaceId/members/:userId'",
+    "'POST /api/integrations/github/start'",
+    "'GET /api/integrations/github/callback'",
+    "'POST /api/integrations/github/disconnect'",
+  ]) assert.ok(backend.includes(route), \`missing route \${route}\`);
+
+  assert.ok(backend.includes("secrets.readSecret(GITHUB_CLIENT_SECRET_SECRET)"));
+  assert.ok(backend.includes("const PLATFORM_OWNER_SECRET = 'PLATFORM_OWNER_EMAILS'"));
+  assert.ok(backend.includes("if (!(await isPlatformOwner(user)))"));
+  assert.ok(backend.includes("if: { status: 'pending', appUserId: savedState.appUserId }"));
+  assert.ok(backend.includes("new Date(savedState.expiresAt).getTime() <= Date.now()"));
+  assert.ok(backend.includes("'github_identity_owners'"));
+  assert.ok(backend.includes("'audit_events'"));
+  assert.ok(backend.includes("workspaceMembersTable(workspaceId)"));
+  assert.ok(backend.includes("userWorkspaceMembershipsTable(targetAccount.userId)"));
+  assert.ok(backend.includes('The target must sign in to ContribQuest once before they can be assigned a role.'));
+  assert.ok(backend.includes('A workspace must retain at least one administrator.'));
+  assert.ok(backend.includes('repository installation is a separate pending step'));
+  assert.doesNotMatch(backend, /record:\\s*\\{[^}]*accessToken/s);
+});
+
 test('package exposes a dependency-free contract test command', () => {
   assert.equal(packageManifest.private, true);
   assert.equal(packageManifest.type, 'module');
