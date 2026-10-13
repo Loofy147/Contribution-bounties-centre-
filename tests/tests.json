@@ -136,5 +136,23 @@
       "Read the GitHub connection status message"
     ],
     "expected": "ContribQuest explains that GitHub rejected the callback URL and shows the exact user-authorization callback URL to configure."
+  },
+  {
+    "name": "Display verified GitHub email separately from app email",
+    "viewport": "desktop",
+    "covers": [
+      "GitHub verified secondary email retrieval",
+      "distinct app and GitHub email addresses",
+      "email permission failure guidance",
+      "canonical app sign-in identity remains unchanged"
+    ],
+    "description": "Verifies the linked GitHub identity can expose its own verified email addresses without requiring them to match the ContribQuest sign-in email.",
+    "steps": [
+      "Configure the GitHub App User permission Email addresses: Read",
+      "Sign in to ContribQuest with the existing account and open Account & integrations",
+      "Connect or reconnect the GitHub identity and authorize the app",
+      "Inspect the verified GitHub email(s) and ContribQuest sign-in email in the linked identity panel"
+    ],
+    "expected": "The linked panel displays GitHub-verified addresses separately from the canonical ContribQuest sign-in email. If email permission is missing, the UI explains the exact permission to enable and the app does not claim that an unverified address is verified."
   }
 ]
