@@ -216,7 +216,7 @@ async function githubSecretStatus(): Promise<{ clientIdConfigured: boolean; clie
     return { clientIdConfigured: false, clientSecretConfigured: false };
   }
 }
-function githubCallbackRedirect(status: 'linked' | 'cancelled' | 'configuration_required' | 'failed' | 'already_linked'): {
+function githubCallbackRedirect(status: 'linked' | 'cancelled' | 'configuration_required' | 'failed' | 'already_linked' | 'callback_mismatch' | 'client_credentials_rejected' | 'authorization_code_rejected' | 'token_exchange_failed' | 'github_profile_rejected' | 'identity_invalid' | 'persistence_failed' | 'state_invalid' | 'app_suspended' | 'provider_error'): {
   statusCode: number; headers: Record<string, string>; body: string;
 } {
   return {
@@ -781,56 +781,110 @@ export const handler = router({
   'POST /api/integrations/github/start': [
     requireAuth(),
     async ctx => {
-      const config = await githubSecretStatus();
-      if (!config.clientIdConfigured || !config.clientSecretConfigured)
-        return error('GitHub identity linking is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in backend secrets first.', 503);
-      const [existing] = await db.get<GitHubIdentity>('github_identity_links', [ctx.user!.userId], { consistent: true });
-      if (existing) return error('A GitHub identity is already linked. Disconnect it before linking a different account.', 409);
-      const clientId = await secrets.readSecret(GITHUB_CLIENT_ID_SECRET);
-      const state = randomUUID();
-      const createdAt = new Date();
-      const [savedId] = await db.tx.add('github_oauth_states', [{
-        id: state, appUserId: ctx.user!.userId, purpose: 'identity_link',
-        status: 'pending', createdAt: createdAt.toISOString(),
-        expiresAt: new Date(createdAt.getTime() + 10 * 60 * 1000).toISOString(),
-      }]);
-      if (!savedId) return error('A secure one-time connection state could not be saved. Retry once.', 503);
-      const authorizationUrl = new URL('https://github.com/login/oauth/authorize');
-      authorizationUrl.searchParams.set('client_id', clientId);
-      authorizationUrl.searchParams.set('redirect_uri', GITHUB_CALLBACK_URL);
-      authorizationUrl.searchParams.set('state', state);
-      authorizationUrl.searchParams.set('allow_signup', 'false');
-      return json({ authorizationUrl: authorizationUrl.toString() });
+      let stage = 'configuration';
+      try {
+        const config = await githubSecretStatus();
+        if (!config.clientIdConfigured || !config.clientSecretConfigured)
+          return error('GitHub identity linking is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in backend secrets first.', 503);
+        stage = 'identity_check';
+        const [existing] = await db.get<GitHubIdentity>('github_identity_links', [ctx.user!.userId], { consistent: true });
+        if (existing) return error('A GitHub identity is already linked. Disconnect it before linking a different account.', 409);
+        stage = 'credentials';
+        const clientId = await secrets.readSecret(GITHUB_CLIENT_ID_SECRET);
+        const clientSecret = await secrets.readSecret(GITHUB_CLIENT_SECRET_SECRET);
+        if (!clientId.trim() || !clientSecret)
+          return error('The configured GitHub Client ID or Client Secret is empty. Update both values from the same GitHub App.', 503);
+        const state = randomUUID();
+        const createdAt = new Date();
+        stage = 'state_write';
+        const [savedId] = await db.tx.add('github_oauth_states', [{
+          id: state, appUserId: ctx.user!.userId, purpose: 'identity_link',
+          status: 'pending', createdAt: createdAt.toISOString(),
+          expiresAt: new Date(createdAt.getTime() + 10 * 60 * 1000).toISOString(),
+        }]);
+        if (!savedId) return error('A secure one-time connection state could not be saved. Refresh and retry.', 503);
+        const authorizationUrl = new URL('https://github.com/login/oauth/authorize');
+        authorizationUrl.searchParams.set('client_id', clientId.trim());
+        authorizationUrl.searchParams.set('redirect_uri', GITHUB_CALLBACK_URL);
+        authorizationUrl.searchParams.set('state', state);
+        authorizationUrl.searchParams.set('allow_signup', 'false');
+        return json({ authorizationUrl: authorizationUrl.toString() });
+      } catch {
+        console.warn('github_oauth_start_failed', { stage });
+        return error(
+          stage === 'state_write'
+            ? 'ContribQuest could not save the temporary GitHub connection state. Refresh and retry; if it persists, inspect app service status.'
+            : stage === 'credentials'
+              ? 'ContribQuest could not read the GitHub Client ID or Client Secret. Re-enter both values from the same GitHub App.'
+              : 'ContribQuest could not prepare GitHub authorization. Refresh Account & integrations and retry.',
+          503
+        );
+      }
     },
   ],
 
   'GET /api/integrations/github/callback': [
     async ctx => {
+      const providerError = ctx.query.error;
+      if (providerError) {
+        const providerStatus: 'cancelled' | 'callback_mismatch' | 'app_suspended' | 'client_credentials_rejected' | 'provider_error' =
+          providerError === 'access_denied' ? 'cancelled'
+          : providerError === 'redirect_uri_mismatch' ? 'callback_mismatch'
+          : providerError === 'application_suspended' ? 'app_suspended'
+          : providerError === 'incorrect_client_credentials' ? 'client_credentials_rejected'
+          : 'provider_error';
+        if (providerStatus !== 'cancelled') console.warn('github_oauth_provider_rejected', { status: providerStatus });
+        return githubCallbackRedirect(providerStatus);
+      }
+
       const state = ctx.query.state;
-      if (ctx.query.error) return githubCallbackRedirect('cancelled');
       const code = ctx.query.code;
-      if (!state || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(state) || !code || code.length > 512)
-        return githubCallbackRedirect('failed');
-      const [savedState] = await db.get<GitHubOAuthState>('github_oauth_states', [state], { consistent: true });
-      if (!savedState || savedState.status !== 'pending' || savedState.purpose !== 'identity_link' ||
-          new Date(savedState.expiresAt).getTime() <= Date.now()) return githubCallbackRedirect('failed');
-      const [claimed] = await db.tx.update('github_oauth_states', [{
-        id: state, record: { status: 'processing' },
-        if: { status: 'pending', appUserId: savedState.appUserId },
-      }], { patch: true });
-      if (!claimed) return githubCallbackRedirect('failed');
+      if (!state || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(state))
+        return githubCallbackRedirect('state_invalid');
+      if (!code || code.length > 512) return githubCallbackRedirect('authorization_code_rejected');
+
+      let stage: 'state_validation' | 'credentials' | 'token_exchange' | 'github_profile' | 'persistence' = 'state_validation';
+      let failureStatus:
+        | 'callback_mismatch'
+        | 'client_credentials_rejected'
+        | 'authorization_code_rejected'
+        | 'token_exchange_failed'
+        | 'github_profile_rejected'
+        | 'identity_invalid'
+        | 'persistence_failed'
+        | undefined;
       try {
+        const [savedState] = await db.get<GitHubOAuthState>('github_oauth_states', [state], { consistent: true });
+        if (!savedState || savedState.status !== 'pending' || savedState.purpose !== 'identity_link' ||
+            new Date(savedState.expiresAt).getTime() <= Date.now()) return githubCallbackRedirect('state_invalid');
+        const [claimed] = await db.tx.update('github_oauth_states', [{
+          id: state, record: { status: 'processing' },
+          if: { status: 'pending', appUserId: savedState.appUserId },
+        }], { patch: true });
+        if (!claimed) return githubCallbackRedirect('state_invalid');
+
+        stage = 'credentials';
         const clientId = await secrets.readSecret(GITHUB_CLIENT_ID_SECRET);
         const clientSecret = await secrets.readSecret(GITHUB_CLIENT_SECRET_SECRET);
+        if (!clientId.trim() || !clientSecret) return githubCallbackRedirect('configuration_required');
+
+        stage = 'token_exchange';
         const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
           method: 'POST',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: GITHUB_CALLBACK_URL }),
+          body: JSON.stringify({ client_id: clientId.trim(), client_secret: clientSecret, code, redirect_uri: GITHUB_CALLBACK_URL }),
         });
-        if (!tokenResponse.ok) throw new Error('GitHub token exchange failed.');
         const tokenPayload = await tokenResponse.json() as Record<string, unknown>;
-        if (typeof tokenPayload.access_token !== 'string' || tokenPayload.error) throw new Error('GitHub authorization failed.');
-        const accessToken = tokenPayload.access_token;
+        const oauthError = typeof tokenPayload.error === 'string' ? tokenPayload.error : '';
+        if (oauthError === 'incorrect_client_credentials') failureStatus = 'client_credentials_rejected';
+        else if (oauthError === 'redirect_uri_mismatch') failureStatus = 'callback_mismatch';
+        else if (oauthError === 'bad_verification_code') failureStatus = 'authorization_code_rejected';
+        else if (!tokenResponse.ok || oauthError || typeof tokenPayload.access_token !== 'string' || !tokenPayload.access_token)
+          failureStatus = 'token_exchange_failed';
+        if (failureStatus) throw new Error('oauth_token_exchange_failed');
+        const accessToken = tokenPayload.access_token as string;
+
+        stage = 'github_profile';
         const userResponse = await fetch('https://api.github.com/user', {
           headers: {
             Accept: 'application/vnd.github+json',
@@ -839,11 +893,19 @@ export const handler = router({
             'User-Agent': 'ContribQuest',
           },
         });
-        if (!userResponse.ok) throw new Error('GitHub identity could not be verified.');
+        if (!userResponse.ok) {
+          failureStatus = 'github_profile_rejected';
+          throw new Error('github_profile_request_failed');
+        }
         const githubUser = await userResponse.json() as Record<string, unknown>;
         if (typeof githubUser.id !== 'number' || typeof githubUser.login !== 'string' ||
             !Number.isSafeInteger(githubUser.id) || githubUser.id <= 0 ||
-            !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37})$/.test(githubUser.login)) throw new Error('GitHub returned an invalid identity.');
+            !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37})$/.test(githubUser.login)) {
+          failureStatus = 'identity_invalid';
+          throw new Error('github_identity_invalid');
+        }
+
+        stage = 'persistence';
         const githubUserId = String(githubUser.id);
         const [existingLink] = await db.get<GitHubIdentity>('github_identity_links', [savedState.appUserId], { consistent: true });
         const ownerId = 'ghu_' + githubUserId;
@@ -872,8 +934,15 @@ export const handler = router({
         await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'consumed' }, if: { status: 'processing' } }], { patch: true });
         return githubCallbackRedirect('linked');
       } catch {
+        const failure =
+          failureStatus
+          || (stage === 'credentials' ? 'configuration_required'
+            : stage === 'token_exchange' ? 'token_exchange_failed'
+            : stage === 'github_profile' ? 'github_profile_rejected'
+            : 'persistence_failed');
+        console.warn('github_oauth_callback_failed', { stage, status: failure });
         await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'failed' }, if: { status: 'processing' } }], { patch: true }).catch(() => []);
-        return githubCallbackRedirect('failed');
+        return githubCallbackRedirect(failure);
       }
     },
   ],
