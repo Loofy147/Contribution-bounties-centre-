@@ -783,6 +783,10 @@ export const handler = router({
     async ctx => {
       let stage = 'configuration';
       try {
+        const body = objectBody(ctx.body);
+        const requestedLogin = textField(body.login, 39);
+        if (requestedLogin && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(requestedLogin))
+          return error('Enter a valid GitHub username, not an email address.', 400);
         const config = await githubSecretStatus();
         if (!config.clientIdConfigured || !config.clientSecretConfigured)
           return error('GitHub identity linking is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in backend secrets first.', 503);
@@ -808,6 +812,8 @@ export const handler = router({
         authorizationUrl.searchParams.set('redirect_uri', GITHUB_CALLBACK_URL);
         authorizationUrl.searchParams.set('state', state);
         authorizationUrl.searchParams.set('allow_signup', 'false');
+        if (requestedLogin) authorizationUrl.searchParams.set('login', requestedLogin);
+        else authorizationUrl.searchParams.set('prompt', 'select_account');
         return json({ authorizationUrl: authorizationUrl.toString() });
       } catch {
         console.warn('github_oauth_start_failed', { stage });
