@@ -302,13 +302,24 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('integration') === 'github') {
       const status = params.get('status');
+      const messages: Record<string, string> = {
+        linked: 'GitHub identity linked to this existing account.',
+        cancelled: 'GitHub connection was cancelled.',
+        already_linked: 'That GitHub identity is already linked or this account has a different link.',
+        configuration_required: 'The GitHub Client ID or Client Secret is missing or unreadable by the backend. Check the configured backend secrets.',
+        callback_mismatch: 'GitHub rejected the callback URL. Set the GitHub App User authorization callback URL exactly to https://contribquest-lygj1x.v2.appdeploy.ai/api/integrations/github/callback.',
+        client_credentials_rejected: 'GitHub rejected the Client ID or Client Secret. Verify both values came from the same GitHub App.',
+        authorization_code_rejected: 'GitHub rejected or expired the one-time authorization code. Start a fresh connection and authorize once.',
+        token_exchange_failed: 'ContribQuest could not exchange the GitHub authorization code. Check the GitHub App credentials and callback URL, then retry.',
+        github_profile_rejected: 'GitHub authorization returned, but the profile request failed. Please try connecting again.',
+        identity_invalid: 'GitHub returned an identity response ContribQuest could not validate. No account was linked.',
+        persistence_failed: 'GitHub identity verification reached ContribQuest, but saving the link failed. Refresh Account & integrations before retrying.',
+        state_invalid: 'The connection attempt expired or could not be validated. Start a fresh connection.',
+        app_suspended: 'GitHub reports this app is suspended. Check the GitHub App status.',
+        provider_error: 'GitHub returned an authorization error. Check the GitHub App settings and retry.',
+      };
       setView('Account & integrations');
-      setToast(
-        status === 'linked' ? 'GitHub identity linked to this existing account.'
-        : status === 'cancelled' ? 'GitHub connection was cancelled.'
-        : status === 'already_linked' ? 'That GitHub identity is already linked or this account has a different link.'
-        : 'GitHub connection could not be verified. Check configuration and try again.'
-      );
+      setToast(status ? (messages[status] || 'GitHub connection failed. Start a fresh attempt and check app settings.') : 'GitHub connection failed. Start a fresh attempt and check app settings.');
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
