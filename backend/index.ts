@@ -70,7 +70,7 @@ type WorkspaceMembership = {
 };
 type AccountIdentity = { id: string; userId: string; email?: string; displayName: string; firstSeenAt: string; lastSeenAt: string };
 type AccountEmailIndex = { id: string; userId: string; email: string };
-type GitHubIdentity = { id: string; appUserId: string; githubUserId: string; githubLogin: string; linkedAt: string };
+type GitHubIdentity = { id: string; appUserId: string; githubUserId: string; githubLogin: string; verifiedEmails?: string[]; primaryEmail?: string; emailAccessStatus?: 'available' | 'permission_required' | 'unavailable'; linkedAt: string };
 type GitHubIdentityOwner = { id: string; appUserId: string; githubUserId: string };
 type GitHubOAuthState = {
   id: string; appUserId: string; purpose: 'identity_link';
@@ -625,7 +625,7 @@ export const handler = router({
           clientIdConfigured: githubSecrets.clientIdConfigured,
           clientSecretConfigured: githubSecrets.clientSecretConfigured,
           linked: Boolean(githubLink),
-          ...(githubLink ? { githubLogin: githubLink.githubLogin, githubUserId: githubLink.githubUserId, linkedAt: githubLink.linkedAt } : {}),
+          ...(githubLink ? { githubLogin: githubLink.githubLogin, githubUserId: githubLink.githubUserId, linkedAt: githubLink.linkedAt, verifiedEmails: githubLink.verifiedEmails ?? [], ...(githubLink.primaryEmail ? { primaryEmail: githubLink.primaryEmail } : {}), emailAccessStatus: githubLink.emailAccessStatus || 'unavailable' } : { verifiedEmails: [], emailAccessStatus: 'not_linked' }),
           callbackUrl: GITHUB_CALLBACK_URL,
           scope: 'GitHub identity linking only; repository installation is a separate pending step.',
         },
@@ -905,6 +905,33 @@ export const handler = router({
           throw new Error('github_identity_invalid');
         }
 
+        const githubEmailResponse = await fetch('https://api.github.com/user/emails', {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: 'Bearer ' + accessToken,
+            'X-GitHub-Api-Version': '2026-03-10',
+            'User-Agent': 'ContribQuest',
+          },
+        });
+        let verifiedEmails: string[] = [];
+        let primaryEmail: string | undefined;
+        let emailAccessStatus: 'available' | 'permission_required' | 'unavailable' =
+          githubEmailResponse.status === 403 ? 'permission_required' : 'unavailable';
+        if (githubEmailResponse.ok) {
+          const emailPayload = await githubEmailResponse.json() as unknown;
+          if (Array.isArray(emailPayload)) {
+            const verifiedRecords = emailPayload.filter((item): item is Record<string, unknown> =>
+              Boolean(item) && typeof item === 'object' && !Array.isArray(item) &&
+              item.verified === true && Boolean(normalizeEmail(item.email))
+            );
+            verifiedEmails = Array.from(new Set(verifiedRecords
+              .map(item => normalizeEmail(item.email))
+              .filter((email): email is string => Boolean(email))));
+            primaryEmail = normalizeEmail(verifiedRecords.find(item => item.primary === true)?.email) || undefined;
+            emailAccessStatus = 'available';
+          }
+        }
+
         stage = 'persistence';
         const githubUserId = String(githubUser.id);
         const [existingLink] = await db.get<GitHubIdentity>('github_identity_links', [savedState.appUserId], { consistent: true });
@@ -912,6 +939,11 @@ export const handler = router({
         const [existingOwner] = await db.get<GitHubIdentityOwner>('github_identity_owners', [ownerId], { consistent: true });
         if (existingLink) {
           if (existingLink.githubUserId === githubUserId && existingOwner?.appUserId === savedState.appUserId) {
+            const [updated] = await db.tx.update('github_identity_links', [{
+              id: savedState.appUserId,
+              record: { verifiedEmails, ...(primaryEmail ? { primaryEmail } : { primaryEmail: undefined }), emailAccessStatus, linkedAt: existingLink.linkedAt },
+            }], { patch: true });
+            if (!updated) throw new Error('github_email_refresh_failed');
             await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'consumed' }, if: { status: 'processing' } }], { patch: true });
             return githubCallbackRedirect('linked');
           }
@@ -923,7 +955,7 @@ export const handler = router({
           return githubCallbackRedirect('already_linked');
         }
         const linkedAt = new Date().toISOString();
-        const link: GitHubIdentity = { id: savedState.appUserId, appUserId: savedState.appUserId, githubUserId, githubLogin: githubUser.login, linkedAt };
+        const link: GitHubIdentity = { id: savedState.appUserId, appUserId: savedState.appUserId, githubUserId, githubLogin: githubUser.login, verifiedEmails, ...(primaryEmail ? { primaryEmail } : {}), emailAccessStatus, linkedAt };
         const owner: GitHubIdentityOwner = { id: ownerId, appUserId: savedState.appUserId, githubUserId };
         const operations = [
           db.tx.add('github_identity_links', [link]),
