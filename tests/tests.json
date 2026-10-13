@@ -154,5 +154,24 @@
       "Inspect the verified GitHub email(s) and ContribQuest sign-in email in the linked identity panel"
     ],
     "expected": "The linked panel displays GitHub-verified addresses separately from the canonical ContribQuest sign-in email. If email permission is missing, the UI explains the exact permission to enable and the app does not claim that an unverified address is verified."
+  },
+  {
+    "name": "Select the intended GitHub account when linking",
+    "viewport": "mobile",
+    "covers": [
+      "GitHub username selection",
+      "separate application and GitHub emails",
+      "authorization account selection prompt",
+      "identity linking stays bound to authenticated app user"
+    ],
+    "description": "Verifies users can target a specific GitHub username or request an account chooser without needing matching email addresses.",
+    "steps": [
+      "Sign in to the existing ContribQuest account and open Account & integrations",
+      "Enter Loofy147 in the GitHub username to connect field",
+      "Select Connect GitHub identity",
+      "Inspect the GitHub authorization page and verify it targets the requested GitHub username",
+      "Return to ContribQuest after authorizing the account"
+    ],
+    "expected": "GitHub authorization is directed to the requested username; if the field is blank, GitHub is asked to show an account selector. The app account email remains unchanged and the linked identity is taken from GitHub's verified user response."
   }
 ]
