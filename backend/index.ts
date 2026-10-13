@@ -677,7 +677,7 @@ export const handler = router({
             [confirmedGuard.contributionId],
             { consistent: true }
           );
-          if (existingContribution) {
+          if (existingContribution && confirmedGuard.contributionId === id) {
             return json({ contribution: { ...existingContribution, id: confirmedGuard.contributionId } }, 201);
           }
           return error(
