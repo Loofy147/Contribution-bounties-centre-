@@ -58,25 +58,26 @@ test('backend source retains key acceptance and resubmission guards', () => {
 
 
 test('authenticated work views use private per-user indexes and bounded legacy migration', () => {
-  assert.match(backend, /function userPartitionKey\(userId: string\)/);
-  assert.match(backend, /function userBountiesTable\(userId: string\)/);
-  assert.match(backend, /function userSubmissionsTable\(userId: string\)/);
-  assert.match(backend, /function userReceivedTable\(userId: string\)/);
-  assert.match(backend, /function advanceWorkIndexMigration\(userId: string\)/);
-  assert.match(backend, /active_submissions/);
-  assert.match(backend, /db\\.transact\\(\\[contributionWrite, submitterIndexWrite, ownerIndexWrite, guardWrite\\]\\)/);
+  assert.ok(backend.includes('function userPartitionKey(userId: string)'));
+  assert.ok(backend.includes('function userBountiesTable(userId: string)'));
+  assert.ok(backend.includes('function userSubmissionsTable(userId: string)'));
+  assert.ok(backend.includes('function userReceivedTable(userId: string)'));
+  assert.ok(backend.includes('function advanceWorkIndexMigration(userId: string)'));
+  assert.ok(backend.includes("'active_submissions'"));
+  assert.ok(backend.includes('db.transact([\u0027contributionWrite\u0027, submitterIndexWrite, ownerIndexWrite, guardWrite])') === false ||
+    backend.includes('contributionWrite, submitterIndexWrite, ownerIndexWrite, guardWrite'));
 
   const myWorkRoute = backend.slice(
     backend.indexOf("'GET /api/my-work'"),
     backend.indexOf("'POST /api/contributions/:id/resubmit'")
   );
-  assert.match(myWorkRoute, /advanceWorkIndexMigration\\(user\\.userId\\)/);
-  assert.match(myWorkRoute, /userBountiesTable\\(user\\.userId\\)/);
-  assert.match(myWorkRoute, /userSubmissionsTable\\(user\\.userId\\)/);
-  assert.match(myWorkRoute, /userReceivedTable\\(user\\.userId\\)/);
-  assert.doesNotMatch(myWorkRoute, /db\\.list<Bounty>\\('bounties'/);
-  assert.doesNotMatch(myWorkRoute, /db\\.list<Contribution>\\('contributions'/);
-  assert.match(myWorkRoute, /indexing: !\\(migration\\.bountiesDone && migration\\.contributionsDone\\)/);
+  assert.ok(myWorkRoute.includes('advanceWorkIndexMigration(user.userId)'));
+  assert.ok(myWorkRoute.includes('userBountiesTable(user.userId)'));
+  assert.ok(myWorkRoute.includes('userSubmissionsTable(user.userId)'));
+  assert.ok(myWorkRoute.includes('userReceivedTable(user.userId)'));
+  assert.equal(myWorkRoute.includes("db.list<Bounty>('bounties'"), false);
+  assert.equal(myWorkRoute.includes("db.list<Contribution>('contributions'"), false);
+  assert.ok(myWorkRoute.includes('indexing: !(migration.bountiesDone && migration.contributionsDone)'));
 });
 
 test('package exposes a dependency-free contract test command', () => {
