@@ -99,5 +99,26 @@
       "Try to resubmit a contribution that is not in changes-requested status"
     ],
     "expected": "One clear criterion is allowed; empty, too-short, duplicated, or more-than-ten criteria are rejected. Review and ownership guards remain enforced, and invalid requests award no XP."
+  },
+  {
+    "name": "Review account roles and GitHub connection prerequisites",
+    "viewport": "desktop",
+    "covers": [
+      "existing account identity remains canonical",
+      "server-supplied role summary",
+      "workspace membership visibility",
+      "GitHub OAuth configuration status",
+      "exact GitHub callback URL",
+      "owner role cannot be self-claimed"
+    ],
+    "description": "Verifies account settings explain the account, role boundaries and GitHub setup without claiming a connection before credentials are configured.",
+    "steps": [
+      "Sign in with the existing ContribQuest account",
+      "Open Account & integrations",
+      "Inspect the account ID and current role",
+      "Inspect the GitHub configuration status and exact callback URL",
+      "Confirm repository installation is separate from identity linking and owner access requires server-side allowlisting"
+    ],
+    "expected": "The existing account remains canonical; roles come from server state, missing GitHub secrets appear as not configured, the callback URL is displayed exactly, and the interface never claims GitHub is linked or allows self-promotion to platform owner."
   }
 ]
