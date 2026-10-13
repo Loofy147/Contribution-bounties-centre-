@@ -2257,6 +2257,13 @@ a {
 .github-login-field label{display:grid;gap:6px;color:#58645b;font-size:12px;font-weight:600}
 .github-login-field input{width:100%;min-width:0;padding:10px 11px;border:1px solid #dfe5dc;border-radius:9px;outline:none;background:#fff;color:var(--ink);font-size:12px}
 .github-login-field input:focus{border-color:#a1b581;box-shadow:0 0 0 3px rgba(150,180,108,.15)}
+.github-connect-actions{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0}
+.github-device-flow{display:grid;gap:10px;padding:14px;border:1px solid #dce5d2;border-radius:12px;background:#f8faf5}
+.github-device-flow>strong{font-size:13px;color:var(--ink)}
+.github-device-flow p{margin:0;color:var(--muted);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.github-device-flow code{color:#3f5540;font:11px 'DM Mono',monospace;overflow-wrap:anywhere}
+.github-device-code{font:750 27px/1.3 'DM Mono',monospace;letter-spacing:2px;text-align:center;padding:13px;border:1px dashed #b9caa4;border-radius:9px;background:#fff;color:var(--ink)}
+.github-device-flow a{display:inline-flex;align-items:center;gap:7px;color:#365cbd;font-weight:700;font-size:13px;overflow-wrap:anywhere}
 .role-matrix{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .role-matrix>div{display:grid;gap:5px;border:1px solid #e8ece5;border-radius:10px;padding:12px}
 .role-matrix strong{color:var(--ink);font-size:12px}
