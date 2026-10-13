@@ -16,9 +16,12 @@ Priorities are ordered by risk reduction, not by feature visibility.
 
 - [x] Document GitHub App, MCP, database, secret-management, and authorization boundaries.
 - [ ] Register a GitHub App with minimal read permissions; configure callback and secrets through the secure secret flow.
-- [ ] Implement a read-only Connect GitHub flow with state validation, selected-repository linking, permission display, and disconnect/revocation behavior.
-- [ ] Replace growing global list-and-filter access patterns with project/user-scoped lookup paths before unrelated projects are onboarded.
-- [ ] Add workspace/project memberships and negative cross-project authorization tests.
+- [x] Implement one-time-state GitHub identity linking to the existing application account; use the temporary token only to verify identity and do not persist it.
+- [ ] Implement GitHub App installation verification, selected-repository linking, permission display, read-only repository sync, and revocation behavior.
+- [x] Replace broad global scans used by authenticated `/api/my-work` with per-user scoped lookup tables and bounded legacy migration.
+- [x] Add initial workspace/project-membership records, role assignment/removal routes, server-side admin checks, and audit events.
+- [ ] Enforce explicit project membership on every protected bounty/contribution/read/mutation route and add negative cross-project authorization tests before unrelated projects are onboarded.
+
 - [ ] Define an append-only audit/event contract and idempotent XP ledger/replay handling.
 - [ ] Specify MCP tool schemas and authorization. Implement read-only tools only after shared domain services and project scope checks exist.
 - [ ] Verify secrets are never exposed in frontend bundles, ordinary records, API responses, or logs.
