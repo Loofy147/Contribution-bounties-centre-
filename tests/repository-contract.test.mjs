@@ -64,7 +64,6 @@ test('authenticated work views use private per-user indexes and bounded legacy m
   assert.ok(backend.includes('function userReceivedTable(userId: string)'));
   assert.ok(backend.includes('function advanceWorkIndexMigration(userId: string)'));
   assert.ok(backend.includes("'active_submissions'"));
-  assert.ok(backend.includes('contributionWrite, submitterIndexWrite, ownerIndexWrite, guardWrite'));
 
   const myWorkRoute = backend.slice(
     backend.indexOf("'GET /api/my-work'"),
@@ -77,6 +76,14 @@ test('authenticated work views use private per-user indexes and bounded legacy m
   assert.equal(myWorkRoute.includes("db.list<Bounty>('bounties'"), false);
   assert.equal(myWorkRoute.includes("db.list<Contribution>('contributions'"), false);
   assert.ok(myWorkRoute.includes('indexing: !(migration.bountiesDone && migration.contributionsDone)'));
+
+  const submitRoute = backend.slice(
+    backend.indexOf("'POST /api/bounties/:id/submit'"),
+    backend.indexOf("'GET /api/my-work'")
+  );
+  assert.ok(submitRoute.includes('if (!migration.contributionsDone)'));
+  assert.ok(submitRoute.includes('Your existing contribution history is still being indexed.'));
+  assert.equal(submitRoute.includes("db.list<Contribution>('contributions'"), false);
 });
 
 test('package exposes a dependency-free contract test command', () => {
