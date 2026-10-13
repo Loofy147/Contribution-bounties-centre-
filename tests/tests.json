@@ -194,5 +194,28 @@
       "Return to ContribQuest and wait for automatic verification"
     ],
     "expected": "ContribQuest polls at GitHub's required interval, then displays the linked GitHub identity and verified email status. The temporary device code is not stored in plaintext, and no GitHub access token is stored in normal database records."
+  },
+  {
+    "name": "Verify and use the encrypted GitHub PAT through ContribQuest",
+    "viewport": "desktop",
+    "covers": [
+      "GitHub PAT is stored as a backend secret",
+      "PAT verification without returning credentials",
+      "repository access to both configured working repos",
+      "owner-only repository file reading",
+      "reviewed file commits through GitHub API",
+      "repository allowlist enforcement"
+    ],
+    "description": "Verifies the owner can validate the backend PAT against GitHub and the two configured repositories, read a text file, and commit a confirmed edit without exposing the token.",
+    "steps": [
+      "Sign in with the configured platform-owner ContribQuest account",
+      "Open Account & integrations and select Verify PAT and repository access",
+      "Inspect the GitHub login and access result for each allowed repository",
+      "Select one allowed repository, enter README.md and choose Read file from GitHub",
+      "Edit a harmless test line and enter a clear commit message",
+      "Confirm Commit file change and inspect the returned commit link",
+      "Attempt to select an unconfigured repository and verify the backend rejects it"
+    ],
+    "expected": "The backend verifies the PAT without returning its value, reports access for both allowed repos, reads a file, and commits only to one allowed repository after confirmation. Non-owner requests and repos outside the two-repository allowlist are rejected."
   }
 ]
