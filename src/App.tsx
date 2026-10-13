@@ -107,13 +107,28 @@ type WorkData = {
   indexProgress?: { bountiesDone: boolean; contributionsDone: boolean };
   hasMore?: { myBounties: boolean; mySubmissions: boolean; receivedSubmissions: boolean };
 };
+type WorkspaceMembership = {
+  id: string; workspaceId: string; workspaceName: string; userId: string;
+  email?: string; displayName?: string;
+  role: 'workspace_admin' | 'reviewer' | 'contributor' | 'observer';
+  createdAt: string;
+};
+type AccountSecurity = {
+  account: { userId: string; email?: string; displayName: string };
+  access: { roles: string[]; platformOwnerConfigured: boolean; isPlatformOwner: boolean;
+    workspaces: WorkspaceMembership[]; hasMoreWorkspaces: boolean };
+  github: { configured: boolean; clientIdConfigured: boolean; clientSecretConfigured: boolean;
+    linked: boolean; githubLogin?: string; githubUserId?: string; linkedAt?: string;
+    callbackUrl: string; scope: string };
+};
 type View =
   | 'Overview'
   | 'Explore bounties'
   | 'My contributions'
   | 'Manage work'
   | 'Goals & levels'
-  | 'Leaderboard';
+  | 'Leaderboard'
+  | 'Account & integrations';
 
 const EMPTY_WORK: WorkData = {
   profile: { xp: 0, acceptedCount: 0 },
@@ -131,6 +146,7 @@ const NAV: { name: View; icon: typeof Compass; hint?: string }[] = [
   { name: 'Manage work', icon: ShieldCheck },
   { name: 'Goals & levels', icon: Target },
   { name: 'Leaderboard', icon: Trophy },
+  { name: 'Account & integrations', icon: ShieldCheck },
 ];
 
 const DEFAULT_ACCEPTANCE_CRITERIA = [
@@ -216,6 +232,14 @@ function App() {
     note: '',
   });
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, ReviewDraft>>({});
+  const [securityState, setSecurityState] = useState<AccountSecurity | null>(null);
+  const [securityLoading, setSecurityLoading] = useState(false);
+  const [securityBusy, setSecurityBusy] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMembership[]>([]);
+  const [memberEmail, setMemberEmail] = useState('');
+  const [memberRole, setMemberRole] = useState<'workspace_admin' | 'reviewer' | 'contributor' | 'observer'>('contributor');
 
   const getReviewDraft = (item: Contribution): ReviewDraft =>
     reviewDrafts[item.id] ?? {
@@ -273,6 +297,26 @@ function App() {
   useEffect(() => {
     void refreshData();
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('integration') === 'github') {
+      const status = params.get('status');
+      setView('Account & integrations');
+      setToast(
+        status === 'linked' ? 'GitHub identity linked to this existing account.'
+        : status === 'cancelled' ? 'GitHub connection was cancelled.'
+        : status === 'already_linked' ? 'That GitHub identity is already linked or this account has a different link.'
+        : 'GitHub connection could not be verified. Check configuration and try again.'
+      );
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user && view === 'Account & integrations') void refreshSecurity();
+    if (!user) { setSecurityState(null); setWorkspaceMembers([]); }
+  }, [user?.userId, view]);
 
   const acceptedCount = work.profile?.acceptedCount ?? 0;
   const xp = work.profile?.xp ?? 0;
@@ -341,6 +385,89 @@ function App() {
     } catch (err) {
       setError(errorText(err));
     }
+  };
+
+
+  const refreshSecurity = async () => {
+    setSecurityLoading(true);
+    try {
+      const response = await api.get('/api/account/security');
+      const summary = response.data as AccountSecurity;
+      setSecurityState(summary);
+      const selected = summary.access.workspaces.some(item => item.workspaceId === selectedWorkspaceId)
+        ? selectedWorkspaceId : summary.access.workspaces[0]?.workspaceId || '';
+      if (selected && selected !== selectedWorkspaceId) setSelectedWorkspaceId(selected);
+      if (selected && (summary.access.isPlatformOwner ||
+        summary.access.workspaces.some(item => item.workspaceId === selected && item.role === 'workspace_admin'))) {
+        const membersResponse = await api.get('/api/workspaces/' + encodeURIComponent(selected) + '/members');
+        setWorkspaceMembers((membersResponse.data?.members ?? []) as WorkspaceMembership[]);
+      } else setWorkspaceMembers([]);
+    } catch (err) { setError(errorText(err)); }
+    finally { setSecurityLoading(false); }
+  };
+
+  const startGitHubConnection = async () => {
+    setSecurityBusy(true); setError('');
+    try {
+      const response = await api.post('/api/integrations/github/start', {});
+      const url = response.data?.authorizationUrl;
+      if (typeof url !== 'string' || !url.startsWith('https://github.com/login/oauth/authorize')) {
+        throw new Error('The backend did not return a valid GitHub authorization URL.');
+      }
+      window.location.assign(url);
+    } catch (err) { setError(errorText(err)); setSecurityBusy(false); }
+  };
+
+  const disconnectGitHub = async () => {
+    if (!window.confirm('Unlink this GitHub identity from the existing ContribQuest account?')) return;
+    setSecurityBusy(true); setError('');
+    try {
+      await api.post('/api/integrations/github/disconnect', {});
+      await refreshSecurity();
+      showToast('GitHub identity unlinked from this account.');
+    } catch (err) { setError(errorText(err)); }
+    finally { setSecurityBusy(false); }
+  };
+
+  const createWorkspace = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!workspaceName.trim()) return;
+    setSecurityBusy(true); setError('');
+    try {
+      const response = await api.post('/api/workspaces', { name: workspaceName.trim() });
+      const workspace = response.data?.workspace as { id?: string } | undefined;
+      setWorkspaceName('');
+      if (workspace?.id) setSelectedWorkspaceId(workspace.id);
+      await refreshSecurity();
+      showToast('Workspace created. You have workspace administrator access.');
+    } catch (err) { setError(errorText(err)); }
+    finally { setSecurityBusy(false); }
+  };
+
+  const assignWorkspaceRole = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedWorkspaceId || !memberEmail.trim()) return;
+    setSecurityBusy(true); setError('');
+    try {
+      await api.post('/api/access/workspaces/' + encodeURIComponent(selectedWorkspaceId) + '/members', {
+        email: memberEmail.trim(), role: memberRole,
+      });
+      setMemberEmail('');
+      await refreshSecurity();
+      showToast('Workspace role assigned and audited.');
+    } catch (err) { setError(errorText(err)); }
+    finally { setSecurityBusy(false); }
+  };
+
+  const removeWorkspaceMember = async (member: WorkspaceMembership) => {
+    if (!selectedWorkspaceId || !window.confirm('Remove this member from the workspace?')) return;
+    setSecurityBusy(true); setError('');
+    try {
+      await api.delete('/api/access/workspaces/' + encodeURIComponent(selectedWorkspaceId) + '/members/' + encodeURIComponent(member.userId));
+      await refreshSecurity();
+      showToast('Workspace membership removed and audited.');
+    } catch (err) { setError(errorText(err)); }
+    finally { setSecurityBusy(false); }
   };
 
   const requireUser = async () => {
@@ -529,6 +656,7 @@ function App() {
     'Manage work': 'Review contributions',
     'Goals & levels': 'Build your reputation',
     Leaderboard: 'Community leaderboard',
+    'Account & integrations': 'Account, roles & integrations',
   };
 
   const renderBounty = (item: Bounty) => {
@@ -1411,6 +1539,91 @@ function App() {
     </>
   );
 
+
+  const renderAccountIntegrations = () => {
+    if (!user) return (
+      <section className="settings-panel">
+        <h2>Account and permissions</h2>
+        <p>Sign in with your existing account to view its identity, roles and linked integrations.</p>
+        <button className="button button-dark" onClick={() => void signIn()}><LogIn size={15} /> Sign in</button>
+      </section>
+    );
+    if (securityLoading && !securityState) return <section className="settings-panel"><Activity size={18} /> Loading account security…</section>;
+    const settings = securityState;
+    const owner = Boolean(settings?.access.isPlatformOwner);
+    const selectedMembership = settings?.access.workspaces.find(item => item.workspaceId === selectedWorkspaceId);
+    const canManageSelected = owner || selectedMembership?.role === 'workspace_admin';
+    const canManageAny = owner || Boolean(settings?.access.workspaces.some(item => item.role === 'workspace_admin'));
+    return (
+      <div className="settings-grid">
+        <section className="settings-panel">
+          <div className="settings-panel-heading"><ShieldCheck size={21}/><div><h2>Existing account</h2><p>This remains your canonical ContribQuest identity. Linking GitHub does not create a second profile.</p></div></div>
+          <div className="settings-detail-list">
+            <div><span>Display name</span><strong>{settings?.account.displayName || user.name || 'Contributor'}</strong></div>
+            <div><span>Sign-in email</span><strong>{settings?.account.email || user.email || 'Email scope unavailable'}</strong></div>
+            <div><span>Account ID</span><code>{settings?.account.userId || user.userId}</code></div>
+            <div><span>Platform role</span><strong>{owner ? 'Platform owner' : settings?.access.platformOwnerConfigured ? 'Not on owner allowlist' : 'Owner setup pending'}</strong></div>
+          </div>
+          <div className="settings-role-row">{(settings?.access.roles ?? ['contributor']).map(role => <span className="role-chip" key={role}>{role.replace(/_/g,' ')}</span>)}</div>
+          {!settings?.access.platformOwnerConfigured && <div className="settings-notice"><LockKeyhole size={17}/><span>Owner setup requires the verified account email to be configured server-side in <code>PLATFORM_OWNER_EMAILS</code>. Users cannot grant themselves platform-owner access.</span></div>}
+        </section>
+
+        <section className="settings-panel">
+          <div className="settings-panel-heading"><GitBranch size={21}/><div><h2>GitHub identity</h2><p>Link GitHub to this account. Repository installation and access are separate permissions.</p></div><span className={'settings-status '+(settings?.github.linked?'settings-status-good':'')}>{settings?.github.linked?'Linked':settings?.github.configured?'Ready':'Not configured'}</span></div>
+          {settings?.github.linked ? <>
+            <div className="github-linked-row"><div className="github-mark"><GitBranch size={20}/></div><div><strong>@{settings.github.githubLogin}</strong><small>GitHub user ID {settings.github.githubUserId}</small></div></div>
+            <div className="settings-notice"><CheckCircle2 size={17}/><span>Identity verified. Repository installation, repository selection and repository sync are not connected yet.</span></div>
+            <button className="button button-muted" disabled={securityBusy} onClick={() => void disconnectGitHub()}>Disconnect identity</button>
+          </> : <>
+            <div className="settings-detail-list">
+              <div><span>Client ID</span><strong>{settings?.github.clientIdConfigured?'Configured':'Missing'}</strong></div>
+              <div><span>Client secret</span><strong>{settings?.github.clientSecretConfigured?'Configured':'Missing'}</strong></div>
+              <div><span>Callback URL</span><code>{settings?.github.callbackUrl || 'https://contribquest-lygj1x.v2.appdeploy.ai/api/integrations/github/callback'}</code></div>
+            </div>
+            {!settings?.github.configured && <div className="settings-notice"><Activity size={17}/><span>Register a GitHub App using the exact callback URL. Then set <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code> through AppDeploy secure backend-secret entry. Never paste credentials into chat or source.</span></div>}
+            <button className="button button-dark" disabled={securityBusy || !settings?.github.configured} onClick={() => void startGitHubConnection()}>{securityBusy?'Preparing…':'Connect GitHub identity'} <ArrowUpRight size={15}/></button>
+            <p className="settings-footnote">A short-lived one-time state is tied to this signed-in ContribQuest user. The temporary GitHub token is not saved as an ordinary database record.</p>
+          </>}
+        </section>
+
+        <section className="settings-panel settings-panel-wide">
+          <div className="settings-panel-heading"><ShieldCheck size={21}/><div><h2>Roles and rules</h2><p>Application roles do not grant GitHub permissions. The backend checks every workspace membership change.</p></div></div>
+          <div className="role-matrix">
+            <div><strong>Platform owner</strong><span>Global policy and workspace creation. Assigned only through server-side allowlisting.</span></div>
+            <div><strong>Workspace administrator</strong><span>Manage workspace membership and assign permitted roles.</span></div>
+            <div><strong>Reviewer</strong><span>Review authorized evidence; existing bounty-owner checks remain in force.</span></div>
+            <div><strong>Contributor</strong><span>Create and submit permitted work; XP follows accepted-work rules.</span></div>
+            <div><strong>Observer</strong><span>Read authorized workspace information without mutating it.</span></div>
+          </div>
+          <div className="settings-notice"><LockKeyhole size={17}/><span>Legacy bounty records still use their existing ownership checks. Workspace roles are not yet a universal project-membership policy for every bounty route.</span></div>
+        </section>
+
+        <section className="settings-panel settings-panel-wide">
+          <div className="settings-panel-heading"><Users size={21}/><div><h2>Workspaces</h2><p>Your own memberships are shown below. Workspace creation requires the configured platform-owner role.</p></div></div>
+          {settings?.access.workspaces.length ? <div className="settings-workspace-list">{settings.access.workspaces.map(item =>
+            <button key={item.workspaceId} className={'settings-workspace-row '+(selectedWorkspaceId===item.workspaceId?'settings-workspace-active':'')} onClick={() => {setSelectedWorkspaceId(item.workspaceId);setWorkspaceMembers([]);}}>
+              <span><strong>{item.workspaceName}</strong><small>{item.workspaceId}</small></span><span className="role-chip">{item.role.replace(/_/g,' ')}</span>
+            </button>
+          )}</div> : <p className="settings-footnote">No workspace memberships yet.</p>}
+          {owner && <form className="settings-inline-form" onSubmit={createWorkspace}><label>New workspace name<input required minLength={3} maxLength={100} value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} placeholder="Contribution Network"/></label><button className="button button-dark" disabled={securityBusy}>{securityBusy?'Saving…':'Create workspace'} <Plus size={15}/></button></form>}
+          {canManageAny && settings?.access.workspaces.length ? <>
+            <div className="settings-subheading"><h3>Members</h3>{selectedWorkspaceId&&<code>{selectedWorkspaceId}</code>}</div>
+            <div className="settings-member-list">{workspaceMembers.map(member=><div className="settings-member-row" key={member.id}>
+              <div><strong>{member.displayName||member.email||member.userId}</strong><small>{member.email||member.userId}</small></div><span className="role-chip">{member.role.replace(/_/g,' ')}</span>
+              {member.userId!==user.userId&&<button className="button button-small button-muted" disabled={securityBusy} onClick={()=>void removeWorkspaceMember(member)}>Remove</button>}
+            </div>)}{!workspaceMembers.length&&<p className="settings-footnote">Select a workspace you administer to see its members.</p>}</div>
+            {canManageSelected&&<form className="settings-inline-form" onSubmit={assignWorkspaceRole}>
+              <label>Existing account email<input type="email" required value={memberEmail} onChange={e=>setMemberEmail(e.target.value)} placeholder="person@example.com"/></label>
+              <label>Role<select value={memberRole} onChange={e=>setMemberRole(e.target.value as typeof memberRole)}>{owner&&<option value="workspace_admin">Workspace administrator</option>}<option value="reviewer">Reviewer</option><option value="contributor">Contributor</option><option value="observer">Observer</option></select></label>
+              <button className="button button-dark" disabled={securityBusy}>{securityBusy?'Saving…':'Assign role'} <ArrowRight size={15}/></button>
+            </form>}
+            <p className="settings-footnote">A target must sign into the app once before their account can be assigned a role. Only a platform owner may grant workspace-administrator access.</p>
+          </>:null}
+        </section>
+      </div>
+    );
+  };
+
   return (
     <div className="app-shell">
       <aside className={'sidebar ' + (mobileNav ? 'sidebar-open' : '')}>
@@ -1595,6 +1808,7 @@ function App() {
           {view === 'Manage work' && renderManage()}
           {view === 'Goals & levels' && renderGoals()}
           {view === 'Leaderboard' && renderLeaderboard()}
+          {view === 'Account & integrations' && renderAccountIntegrations()}
           <footer className="app-footer">
             <span>
               CONTRIBQUEST <span className="footer-dot">•</span> PROOF OF WORK,
