@@ -119,6 +119,31 @@ type GitHubOAuthState = {
   createdAt: string; expiresAt: string;
 };
 
+type GitHubPatRepositoryStatus = {
+  repositoryFullName: string;
+  accessible: boolean;
+  repositoryRole?: string;
+  defaultBranch?: string;
+  message?: string;
+  note?: string;
+};
+type GitHubPatVerification = {
+  configured: boolean;
+  verified: boolean;
+  usable?: boolean;
+  login?: string;
+  id?: number;
+  repositories?: GitHubPatRepositoryStatus[];
+  message?: string;
+};
+type GitHubPatFile = {
+  repo: string;
+  path: string;
+  branch: string;
+  content: string;
+  sha?: string;
+  size?: number;
+};
 type GitHubDeviceSession = {
   flowId: string;
   deviceCode: string;
@@ -259,6 +284,14 @@ function App() {
   const [memberRole, setMemberRole] = useState<'workspace_admin' | 'reviewer' | 'contributor' | 'observer'>('contributor');
   const [githubLoginHint, setGithubLoginHint] = useState('');
   const [githubDeviceSession, setGithubDeviceSession] = useState<GitHubDeviceSession | null>(null);
+  const [githubPatBusy, setGithubPatBusy] = useState(false);
+  const [githubPatVerification, setGithubPatVerification] = useState<GitHubPatVerification | null>(null);
+  const [githubPatRepo, setGithubPatRepo] = useState<'Contribution-bounties-centre-' | 'contribution-network'>('Contribution-bounties-centre-');
+  const [githubPatPath, setGithubPatPath] = useState('README.md');
+  const [githubPatBranch, setGithubPatBranch] = useState('main');
+  const [githubPatContent, setGithubPatContent] = useState('');
+  const [githubPatCommitMessage, setGithubPatCommitMessage] = useState('Update README.md');
+  const [githubPatFileLoaded, setGithubPatFileLoaded] = useState(false);
 
   const getReviewDraft = (item: Contribution): ReviewDraft =>
     reviewDrafts[item.id] ?? {
@@ -527,6 +560,88 @@ function App() {
       setError(errorText(err));
     } finally {
       setSecurityBusy(false);
+    }
+  };
+
+  const verifyGitHubPat = async () => {
+    setGithubPatBusy(true);
+    setError('');
+    setGithubPatVerification(null);
+    try {
+      const response = await api.post('/api/integrations/github/pat/verify', {});
+      const result = response.data as GitHubPatVerification;
+      setGithubPatVerification(result);
+      if (result.verified) {
+        showToast(result.usable
+          ? 'GitHub PAT verified. Both working repositories are visible.'
+          : 'GitHub PAT identity verified; check repository access results below.');
+      } else {
+        setError(result.message || 'GitHub PAT verification failed.');
+      }
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setGithubPatBusy(false);
+    }
+  };
+
+  const readGitHubPatFile = async () => {
+    setGithubPatBusy(true);
+    setError('');
+    try {
+      const response = await api.post('/api/integrations/github/pat/file/read', {
+        repo: githubPatRepo,
+        path: githubPatPath.trim(),
+        branch: githubPatBranch.trim() || undefined,
+      });
+      const result = response.data as GitHubPatFile;
+      setGithubPatContent(result.content);
+      setGithubPatPath(result.path);
+      setGithubPatBranch(result.branch);
+      setGithubPatFileLoaded(true);
+      setGithubPatCommitMessage('Update ' + result.path);
+      showToast('Read ' + result.repo + '/' + result.path + ' through the server-side PAT.');
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setGithubPatBusy(false);
+    }
+  };
+
+  const writeGitHubPatFile = async () => {
+    if (!githubPatFileLoaded) {
+      setError('Read the existing file first. This avoids accidentally overwriting a file without its current SHA.');
+      return;
+    }
+    if (githubPatCommitMessage.trim().length < 5) {
+      setError('Enter a commit message of at least five characters.');
+      return;
+    }
+    if (!window.confirm('Commit changes to ' + githubPatRepo + '/' + githubPatPath + ' on branch ' + githubPatBranch + '?')) return;
+    setGithubPatBusy(true);
+    setError('');
+    try {
+      const response = await api.post('/api/integrations/github/pat/file/write', {
+        repo: githubPatRepo,
+        path: githubPatPath.trim(),
+        branch: githubPatBranch.trim(),
+        content: githubPatContent,
+        message: githubPatCommitMessage.trim(),
+      });
+      const result = response.data as { written: boolean; commitSha?: string; commitUrl?: string; path: string; branch: string };
+      if (!result.written) throw new Error('GitHub did not confirm the file commit.');
+      setGithubPatFileLoaded(false);
+      if (result.commitUrl) {
+        showToast('File committed. Open the commit link to inspect the change.');
+      } else {
+        showToast('File commit confirmed: ' + (result.commitSha || 'commit SHA unavailable'));
+      }
+      if (result.commitUrl) window.open(result.commitUrl, '_blank', 'noopener,noreferrer');
+      await verifyGitHubPat();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setGithubPatBusy(false);
     }
   };
 
@@ -1725,6 +1840,55 @@ function App() {
         </section>
 
         <section className="settings-panel settings-panel-wide">
+          <div className="settings-panel-heading"><GitBranch size={21}/><div><h2>GitHub PAT repository operations</h2><p>Owner-only server-side access through the encrypted GITHUB_PAT secret. The browser never receives the token.</p></div><span className={'settings-status '+(githubPatVerification?.verified?'settings-status-good':'')}>{githubPatVerification?.verified?'Verified': 'Not verified'}</span></div>
+          {!owner
+            ? <div className="settings-notice"><LockKeyhole size={17}/><span>Repository operations through the PAT are restricted to the configured platform owner.</span></div>
+            : <>
+              <div className="settings-detail-list">
+                <div><span>Backend PAT</span><strong>Stored as encrypted backend secret</strong></div>
+                <div><span>Allowed repositories</span><strong>Loofy147/Contribution-bounties-centre- · Loofy147/contribution-network</strong></div>
+                {githubPatVerification?.verified && <div><span>Authenticated GitHub account</span><strong>{githubPatVerification.login} (ID {githubPatVerification.id})</strong></div>}
+              </div>
+              <button className="button button-dark" disabled={githubPatBusy} onClick={() => void verifyGitHubPat()}>{githubPatBusy?'Verifying…':'Verify PAT and repository access'} <ShieldCheck size={15}/></button>
+              {githubPatVerification?.message && <div className={'settings-notice'}><Activity size={17}/><span>{githubPatVerification.message}</span></div>}
+              {githubPatVerification?.repositories && <div className="github-pat-repo-results">
+                {githubPatVerification.repositories.map(repository => <div className="github-pat-repo-row" key={repository.repositoryFullName}>
+                  <div><strong>{repository.repositoryFullName}</strong><small>{repository.accessible ? 'GitHub account role: ' + repository.repositoryRole + ' · default branch: ' + repository.defaultBranch + ' · PAT file permissions are tested by read/commit actions.' : repository.message}</small></div>
+                  <span className={'settings-status '+(repository.accessible?'settings-status-good':'')}>{repository.accessible?'Metadata visible':'No access'}</span>
+                </div>)}
+              </div>}
+              <div className="github-pat-editor">
+                <div className="settings-subheading"><h3>Read or commit a text file</h3><span className="settings-footnote">Only the two listed repositories are allowed.</span></div>
+                <div className="github-pat-editor-grid">
+                  <label>Repository
+                    <select value={githubPatRepo} onChange={event => { setGithubPatRepo(event.target.value as 'Contribution-bounties-centre-' | 'contribution-network'); setGithubPatFileLoaded(false); }}>
+                      <option value="Contribution-bounties-centre-">Contribution-bounties-centre-</option>
+                      <option value="contribution-network">contribution-network</option>
+                    </select>
+                  </label>
+                  <label>Branch
+                    <input value={githubPatBranch} onChange={event => { setGithubPatBranch(event.target.value); setGithubPatFileLoaded(false); }} maxLength={250} autoCapitalize="none" autoCorrect="off" />
+                  </label>
+                  <label className="github-pat-path-field">Relative file path
+                    <input value={githubPatPath} onChange={event => { setGithubPatPath(event.target.value); setGithubPatFileLoaded(false); }} maxLength={500} placeholder="README.md" autoCapitalize="none" autoCorrect="off" />
+                  </label>
+                </div>
+                <button className="button button-muted" disabled={githubPatBusy || !githubPatVerification?.verified || !githubPatVerification.usable} onClick={() => void readGitHubPatFile()}>{githubPatBusy?'Working…':'Read file from GitHub'} <ExternalLink size={15}/></button>
+                {githubPatFileLoaded && <div className="github-pat-edit-form">
+                  <label>File contents
+                    <textarea value={githubPatContent} onChange={event => setGithubPatContent(event.target.value)} rows={10} spellCheck={false} />
+                  </label>
+                  <label>Commit message
+                    <input value={githubPatCommitMessage} onChange={event => setGithubPatCommitMessage(event.target.value)} minLength={5} maxLength={200} />
+                  </label>
+                  <button className="button button-dark" disabled={githubPatBusy || !githubPatVerification?.verified || !githubPatVerification.usable} onClick={() => void writeGitHubPatFile()}>{githubPatBusy?'Committing…':'Commit file change'} <GitBranch size={15}/></button>
+                  <p className="settings-footnote">Writing creates a commit on the selected branch. GitHub branch protection and repository rules still apply. Confirm each commit in the browser prompt.</p>
+                </div>}
+              </div>
+            </>}
+        </section>
+
+        <section className="settings-panel settings-panel-wide">
           <div className="settings-panel-heading"><ShieldCheck size={21}/><div><h2>Roles and rules</h2><p>Application roles do not grant GitHub permissions. The backend checks every workspace membership change.</p></div></div>
           <div className="role-matrix">
             <div><strong>Platform owner</strong><span>Global policy and workspace creation. Assigned only through server-side allowlisting.</span></div>
@@ -1833,8 +1997,7 @@ function App() {
           {user ? (
             <div className="user-chip">
               <div className="avatar">
-                {(user.name || user.email || 'C').slice(0, 1).toUpperCase()}
-              </div>
+                {(user.name || user.email || 'C').slice(0, 1).toUpperCase()}              </div>
               <div className="user-chip-copy">
                 <strong>{user.name || 'Contributor'}</strong>
                 <small>{user.email || 'Signed in'}</small>
