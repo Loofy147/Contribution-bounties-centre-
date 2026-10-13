@@ -755,6 +755,8 @@ export const handler = router({
       const memberId = workspaceMembershipId(workspaceId, targetUserId);
       const [membership] = await db.get<WorkspaceMembership>('workspace_memberships', [memberId], { consistent: true });
       if (!membership) return error('Workspace membership not found.', 404);
+      if (membership.role === 'workspace_admin' && !owner)
+        return error('Only a platform owner can remove a workspace administrator.', 403);
       if (membership.role === 'workspace_admin') {
         const page = await db.list<WorkspaceMembership>(workspaceMembersTable(workspaceId), { limit: 100 });
         if (page.nextToken) return error('Cannot safely remove an administrator while the member list exceeds the verification page. Review administrators first.', 409);
