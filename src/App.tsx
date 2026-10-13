@@ -119,6 +119,8 @@ type AccountSecurity = {
     workspaces: WorkspaceMembership[]; hasMoreWorkspaces: boolean };
   github: { configured: boolean; clientIdConfigured: boolean; clientSecretConfigured: boolean;
     linked: boolean; githubLogin?: string; githubUserId?: string; linkedAt?: string;
+    verifiedEmails?: string[]; primaryEmail?: string;
+    emailAccessStatus?: 'available' | 'permission_required' | 'unavailable' | 'not_linked';
     callbackUrl: string; scope: string };
 };
 type View =
@@ -1583,7 +1585,15 @@ function App() {
           <div className="settings-panel-heading"><GitBranch size={21}/><div><h2>GitHub identity</h2><p>Link GitHub to this account. Repository installation and access are separate permissions.</p></div><span className={'settings-status '+(settings?.github.linked?'settings-status-good':'')}>{settings?.github.linked?'Linked':settings?.github.configured?'Ready':'Not configured'}</span></div>
           {settings?.github.linked ? <>
             <div className="github-linked-row"><div className="github-mark"><GitBranch size={20}/></div><div><strong>@{settings.github.githubLogin}</strong><small>GitHub user ID {settings.github.githubUserId}</small></div></div>
-            <div className="settings-notice"><CheckCircle2 size={17}/><span>Identity verified. Repository installation, repository selection and repository sync are not connected yet.</span></div>
+            <div className="settings-detail-list">
+              <div><span>Verified GitHub email(s)</span><strong>{settings.github.verifiedEmails?.length ? settings.github.verifiedEmails.map(email => email === settings.github.primaryEmail ? email + ' (primary)' : email).join(', ') : 'No verified GitHub email returned'}</strong></div>
+              <div><span>ContribQuest sign-in email</span><strong>{settings.account.email || user.email || 'Email scope unavailable'}</strong></div>
+            </div>
+            {settings.github.emailAccessStatus === 'permission_required'
+              ? <div className="settings-notice"><LockKeyhole size={17}/><span>GitHub identity is linked, but GitHub denied access to email addresses. In your GitHub App settings, enable User permissions → Email addresses: Read, save the permission change, then disconnect and reconnect the identity.</span></div>
+              : settings.github.emailAccessStatus === 'unavailable'
+                ? <div className="settings-notice"><Activity size={17}/><span>GitHub identity is linked, but its verified email list could not be retrieved. Check the GitHub App email permission and reconnect.</span></div>
+                : <div className="settings-notice"><CheckCircle2 size={17}/><span>Verified GitHub emails are kept separate from your ContribQuest sign-in email. Different addresses are supported; email address differences alone do not block identity linking. Repository installation and sync are still separate.</span></div>}
             <button className="button button-muted" disabled={securityBusy} onClick={() => void disconnectGitHub()}>Disconnect identity</button>
           </> : <>
             <div className="settings-detail-list">
@@ -1987,8 +1997,7 @@ function App() {
                 <label>
                   Skills, comma-separated
                   <input
-                    value={bountyForm.skills}
-                    onChange={event =>
+                    value={bountyForm.skills}                    onChange={event =>
                       setBountyForm({
                         ...bountyForm,
                         skills: event.target.value,
