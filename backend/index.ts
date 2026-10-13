@@ -6,7 +6,9 @@ import {
   db,
   increment,
   isAppDatabaseError,
+  secrets,
 } from '@appdeploy/sdk';
+import { createHash, randomUUID } from 'node:crypto';
 
 type Bounty = {
   title: string;
@@ -60,6 +62,32 @@ type ReviewEvent = {
   reviewedAt: string;
 };
 type Profile = { displayName: string; xp: number; acceptedCount: number };
+type WorkspaceRole = 'workspace_admin' | 'reviewer' | 'contributor' | 'observer';
+type WorkspaceRecord = { id: string; name: string; createdBy: string; createdAt: string };
+type WorkspaceMembership = {
+  id: string; workspaceId: string; workspaceName: string; userId: string;
+  email?: string; displayName?: string; role: WorkspaceRole; createdBy: string; createdAt: string;
+};
+type AccountIdentity = { id: string; userId: string; email?: string; displayName: string; firstSeenAt: string; lastSeenAt: string };
+type AccountEmailIndex = { id: string; userId: string; email: string };
+type GitHubIdentity = { id: string; appUserId: string; githubUserId: string; githubLogin: string; linkedAt: string };
+type GitHubIdentityOwner = { id: string; appUserId: string; githubUserId: string };
+type GitHubOAuthState = {
+  id: string; appUserId: string; purpose: 'identity_link';
+  status: 'pending' | 'processing' | 'consumed' | 'failed' | 'cancelled';
+  createdAt: string; expiresAt: string;
+};
+type AuditEvent = {
+  id: string; actorUserId: string; action: string; resourceType: string; resourceId: string;
+  targetUserId?: string; role?: string; createdAt: string;
+};
+const APP_BASE_URL = 'https://contribquest-lygj1x.v2.appdeploy.ai';
+const GITHUB_CALLBACK_URL = APP_BASE_URL + '/api/integrations/github/callback';
+const PLATFORM_OWNER_SECRET = 'PLATFORM_OWNER_EMAILS';
+const GITHUB_CLIENT_ID_SECRET = 'GITHUB_CLIENT_ID';
+const GITHUB_CLIENT_SECRET_SECRET = 'GITHUB_CLIENT_SECRET';
+const WORKSPACE_ROLES: WorkspaceRole[] = ['workspace_admin', 'reviewer', 'contributor', 'observer'];
+
 
 type WorkIndexMigration = {
   id: string;
@@ -98,6 +126,114 @@ function submissionGuardId(bountyId: string, userId: string): string {
 }
 function newRecordId(prefix: string): string {
   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 14);
+}
+
+function emailKey(email: string): string {
+  return 'email_' + createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
+}
+function normalizeEmail(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const email = value.trim().toLowerCase();
+  return email.length <= 254 && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : null;
+}
+function validWorkspaceId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/.test(value);
+}
+function workspaceMembershipId(workspaceId: string, userId: string): string {
+  return 'wm_' + workspaceId + '_' + userPartitionKey(userId);
+}
+function workspaceMembersTable(workspaceId: string): string {
+  return 'workspace_members_' + workspaceId;
+}
+function userWorkspaceMembershipsTable(userId: string): string {
+  return 'user_workspaces_' + userPartitionKey(userId);
+}
+async function configuredOwnerEmails(): Promise<string[]> {
+  try {
+    const names = await secrets.listSecretNames();
+    if (!names.includes(PLATFORM_OWNER_SECRET)) return [];
+    const value = await secrets.readSecret(PLATFORM_OWNER_SECRET);
+    return value.split(/[,\n;]/).map(item => item.trim().toLowerCase()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+async function isPlatformOwner(user: { userId: string; email?: string }): Promise<boolean> {
+  const email = normalizeEmail(user.email);
+  if (!email) return false;
+  return (await configuredOwnerEmails()).includes(email);
+}
+async function getWorkspaceMembership(workspaceId: string, userId: string): Promise<WorkspaceMembership | null> {
+  const [membership] = await db.get<WorkspaceMembership>(
+    'workspace_memberships', [workspaceMembershipId(workspaceId, userId)], { consistent: true }
+  );
+  return membership;
+}
+async function canManageWorkspace(user: { userId: string; email?: string }, workspaceId: string): Promise<boolean> {
+  if (await isPlatformOwner(user)) return true;
+  const membership = await getWorkspaceMembership(workspaceId, user.userId);
+  return membership?.role === 'workspace_admin';
+}
+async function ensureAccountIdentity(user: { userId: string; email?: string; name?: string }): Promise<void> {
+  const now = new Date().toISOString();
+  const normalizedEmail = normalizeEmail(user.email);
+  const displayName = user.name?.trim() || normalizedEmail?.split('@')[0] || 'Contributor';
+  const [existing] = await db.get<AccountIdentity>('account_identities', [user.userId], { consistent: true });
+  if (!existing) {
+    await db.tx.add('account_identities', [{
+      id: user.userId, userId: user.userId,
+      ...(normalizedEmail ? { email: normalizedEmail } : {}),
+      displayName, firstSeenAt: now, lastSeenAt: now,
+    }]);
+  } else {
+    const changedEmail = normalizedEmail && normalizeEmail(existing.email) !== normalizedEmail;
+    const [updated] = await db.tx.update('account_identities', [{
+      id: user.userId, record: {
+        ...(normalizedEmail ? { email: normalizedEmail } : {}),
+        displayName, lastSeenAt: now,
+      },
+    }], { patch: true });
+    if (!updated) throw new Error('Account identity could not be refreshed.');
+    if (changedEmail && existing.email) {
+      const oldEmailId = emailKey(existing.email);
+      const [oldIndex] = await db.get<AccountEmailIndex>('account_email_index', [oldEmailId], { consistent: true });
+      if (oldIndex?.userId === user.userId) await db.tx.delete('account_email_index', [oldEmailId]);
+    }
+  }
+  if (normalizedEmail) {
+    const id = emailKey(normalizedEmail);
+    const [existingIndex] = await db.get<AccountEmailIndex>('account_email_index', [id], { consistent: true });
+    if (!existingIndex) {
+      await db.tx.add('account_email_index', [{ id, userId: user.userId, email: normalizedEmail }]);
+    }
+  }
+}
+async function githubSecretStatus(): Promise<{ clientIdConfigured: boolean; clientSecretConfigured: boolean }> {
+  try {
+    const names = await secrets.listSecretNames();
+    return { clientIdConfigured: names.includes(GITHUB_CLIENT_ID_SECRET), clientSecretConfigured: names.includes(GITHUB_CLIENT_SECRET_SECRET) };
+  } catch {
+    return { clientIdConfigured: false, clientSecretConfigured: false };
+  }
+}
+function githubCallbackRedirect(status: 'linked' | 'cancelled' | 'configuration_required' | 'failed' | 'already_linked'): {
+  statusCode: number; headers: Record<string, string>; body: string;
+} {
+  return {
+    statusCode: 302,
+    headers: {
+      Location: APP_BASE_URL + '/?integration=github&status=' + status,
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+    },
+    body: '',
+  };
+}
+function appendAuditEvent(
+  actorUserId: string, action: string, resourceType: string, resourceId: string,
+  fields: { targetUserId?: string; role?: string } = {}
+): AuditEvent {
+  return { id: newRecordId('audit'), actorUserId, action, resourceType, resourceId, ...fields, createdAt: new Date().toISOString() };
 }
 async function ensureIndexRecords<T extends { id: string }>(table: string, records: T[]): Promise<void> {
   const unique = new Map<string, T>();
@@ -453,6 +589,313 @@ async function readBounties() {
 export const handler = router({
   'GET /api/_healthcheck': [
     async () => json({ message: 'ContribQuest API online' }),
+  ],
+
+  'GET /api/account/security': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      await ensureAccountIdentity(user);
+      const [githubLinks, workspaceResult, ownerEmails, githubSecrets, secretNames] = await Promise.all([
+        db.get<GitHubIdentity>('github_identity_links', [user.userId], { consistent: true }),
+        db.list<WorkspaceMembership>(userWorkspaceMembershipsTable(user.userId), { limit: 50 }),
+        configuredOwnerEmails(),
+        githubSecretStatus(),
+        secrets.listSecretNames().catch(() => [] as string[]),
+      ]);
+      const roles = new Set<string>(['contributor']);
+      if (user.email && ownerEmails.includes(user.email.trim().toLowerCase())) roles.add('platform_owner');
+      for (const membership of workspaceResult.items) roles.add(membership.role);
+      const githubLink = githubLinks[0];
+      return json({
+        account: {
+          userId: user.userId,
+          ...(user.email ? { email: user.email } : {}),
+          displayName: user.name?.trim() || user.email?.split('@')[0] || 'Contributor',
+        },
+        access: {
+          roles: [...roles],
+          platformOwnerConfigured: secretNames.includes(PLATFORM_OWNER_SECRET),
+          isPlatformOwner: roles.has('platform_owner'),
+          workspaces: workspaceResult.items,
+          hasMoreWorkspaces: Boolean(workspaceResult.nextToken),
+        },
+        github: {
+          configured: githubSecrets.clientIdConfigured && githubSecrets.clientSecretConfigured,
+          clientIdConfigured: githubSecrets.clientIdConfigured,
+          clientSecretConfigured: githubSecrets.clientSecretConfigured,
+          linked: Boolean(githubLink),
+          ...(githubLink ? { githubLogin: githubLink.githubLogin, githubUserId: githubLink.githubUserId, linkedAt: githubLink.linkedAt } : {}),
+          callbackUrl: GITHUB_CALLBACK_URL,
+          scope: 'GitHub identity linking only; repository installation is a separate pending step.',
+        },
+      });
+    },
+  ],
+
+  'GET /api/workspaces': [
+    requireAuth(),
+    async ctx => {
+      const result = await db.list<WorkspaceMembership>(userWorkspaceMembershipsTable(ctx.user!.userId), { limit: 50 });
+      return json({ workspaces: result.items, hasMore: Boolean(result.nextToken) });
+    },
+  ],
+
+  'POST /api/workspaces': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      if (!(await isPlatformOwner(user))) return error('Only a configured platform owner can create a workspace.', 403);
+      const name = textField(objectBody(ctx.body).name, 100);
+      if (!name || name.length < 3) return error('Workspace name must be between 3 and 100 characters.', 400);
+      const workspaceId = 'ws_' + randomUUID().replace(/-/g, '');
+      const createdAt = new Date().toISOString();
+      const workspace: WorkspaceRecord = { id: workspaceId, name, createdBy: user.userId, createdAt };
+      const memberId = workspaceMembershipId(workspaceId, user.userId);
+      const membership: WorkspaceMembership = {
+        id: memberId, workspaceId, workspaceName: name, userId: user.userId,
+        ...(normalizeEmail(user.email) ? { email: normalizeEmail(user.email)! } : {}),
+        displayName: user.name?.trim() || 'Contributor', role: 'workspace_admin',
+        createdBy: user.userId, createdAt,
+      };
+      const userIndex = {
+        id: 'wm_' + workspaceId, workspaceId, workspaceName: name, userId: user.userId,
+        role: 'workspace_admin' as const, createdAt,
+      };
+      try {
+        await db.transact([
+          db.tx.add('workspaces', [workspace]),
+          db.tx.add('workspace_memberships', [membership]),
+          db.tx.add(workspaceMembersTable(workspaceId), [membership]),
+          db.tx.add(userWorkspaceMembershipsTable(user.userId), [userIndex]),
+          db.tx.add('audit_events', [appendAuditEvent(user.userId, 'workspace.created', 'workspace', workspaceId)]),
+        ]);
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        return error('Workspace creation could not be confirmed. Refresh and check your workspace list.', 503);
+      }
+      return json({ workspace, membership }, 201);
+    },
+  ],
+
+  'GET /api/workspaces/:workspaceId/members': [
+    requireAuth(),
+    async ctx => {
+      const workspaceId = ctx.params.workspaceId;
+      if (!validWorkspaceId(workspaceId)) return error('Invalid workspace identifier.', 400);
+      if (!(await canManageWorkspace(ctx.user!, workspaceId))) return error('Workspace administrator permission required.', 403);
+      const [workspace] = await db.get<WorkspaceRecord>('workspaces', [workspaceId], { consistent: true });
+      if (!workspace) return error('Workspace not found.', 404);
+      const page = await db.list<WorkspaceMembership>(workspaceMembersTable(workspaceId), { limit: 100 });
+      return json({ workspace, members: page.items, hasMore: Boolean(page.nextToken) });
+    },
+  ],
+
+  'POST /api/access/workspaces/:workspaceId/members': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      const workspaceId = ctx.params.workspaceId;
+      if (!validWorkspaceId(workspaceId)) return error('Invalid workspace identifier.', 400);
+      const body = objectBody(ctx.body);
+      const email = normalizeEmail(body.email);
+      const role = body.role;
+      if (!email) return error('Provide the target account email address.', 400);
+      if (typeof role !== 'string' || !WORKSPACE_ROLES.includes(role as WorkspaceRole))
+        return error('Choose workspace administrator, reviewer, contributor, or observer.', 400);
+      const owner = await isPlatformOwner(user);
+      if (role === 'workspace_admin' && !owner) return error('Only a platform owner can grant workspace administrator role.', 403);
+      if (!owner && !(await canManageWorkspace(user, workspaceId))) return error('Workspace administrator permission required.', 403);
+      const [workspace] = await db.get<WorkspaceRecord>('workspaces', [workspaceId], { consistent: true });
+      if (!workspace) return error('Workspace not found.', 404);
+      const [accountIndex] = await db.get<AccountEmailIndex>('account_email_index', [emailKey(email)], { consistent: true });
+      if (!accountIndex) return error('The target must sign in to ContribQuest once before they can be assigned a role.', 404);
+      const [targetAccount] = await db.get<AccountIdentity>('account_identities', [accountIndex.userId], { consistent: true });
+      if (!targetAccount || normalizeEmail(targetAccount.email) !== email)
+        return error('The target account email index is stale. Ask the target to sign in again.', 409);
+      const memberId = workspaceMembershipId(workspaceId, targetAccount.userId);
+      const [existing] = await db.get<WorkspaceMembership>('workspace_memberships', [memberId], { consistent: true });
+      if (existing) return error('This account is already a workspace member. Remove the existing membership before changing its role.', 409);
+      const createdAt = new Date().toISOString();
+      const membership: WorkspaceMembership = {
+        id: memberId, workspaceId, workspaceName: workspace.name, userId: targetAccount.userId,
+        email, displayName: targetAccount.displayName, role: role as WorkspaceRole,
+        createdBy: user.userId, createdAt,
+      };
+      const userIndex = {
+        id: 'wm_' + workspaceId, workspaceId, workspaceName: workspace.name,
+        userId: targetAccount.userId, email, displayName: targetAccount.displayName,
+        role: role as WorkspaceRole, createdAt,
+      };
+      try {
+        await db.transact([
+          db.tx.add('workspace_memberships', [membership]),
+          db.tx.add(workspaceMembersTable(workspaceId), [membership]),
+          db.tx.add(userWorkspaceMembershipsTable(targetAccount.userId), [userIndex]),
+          db.tx.add('audit_events', [appendAuditEvent(user.userId, 'workspace.member_added', 'workspace_membership', memberId, { targetUserId: targetAccount.userId, role })]),
+        ]);
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        return error('Membership was not confirmed. Refresh and inspect the workspace before retrying.', 503);
+      }
+      return json({ membership }, 201);
+    },
+  ],
+
+  'DELETE /api/access/workspaces/:workspaceId/members/:userId': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      const workspaceId = ctx.params.workspaceId;
+      const targetUserId = ctx.params.userId;
+      if (!validWorkspaceId(workspaceId) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetUserId))
+        return error('Invalid workspace or user identifier.', 400);
+      const owner = await isPlatformOwner(user);
+      if (!owner && !(await canManageWorkspace(user, workspaceId))) return error('Workspace administrator permission required.', 403);
+      const memberId = workspaceMembershipId(workspaceId, targetUserId);
+      const [membership] = await db.get<WorkspaceMembership>('workspace_memberships', [memberId], { consistent: true });
+      if (!membership) return error('Workspace membership not found.', 404);
+      if (membership.role === 'workspace_admin') {
+        const page = await db.list<WorkspaceMembership>(workspaceMembersTable(workspaceId), { limit: 100 });
+        if (page.nextToken) return error('Cannot safely remove an administrator while the member list exceeds the verification page. Review administrators first.', 409);
+        if (page.items.filter(item => item.role === 'workspace_admin').length <= 1)
+          return error('A workspace must retain at least one administrator.', 409);
+      }
+      try {
+        await db.transact([
+          db.tx.delete('workspace_memberships', [memberId]),
+          db.tx.delete(workspaceMembersTable(workspaceId), [memberId]),
+          db.tx.delete(userWorkspaceMembershipsTable(targetUserId), ['wm_' + workspaceId]),
+          db.tx.add('audit_events', [appendAuditEvent(user.userId, 'workspace.member_removed', 'workspace_membership', memberId, { targetUserId, role: membership.role })]),
+        ]);
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        return error('Membership removal could not be confirmed. Refresh and inspect the workspace before retrying.', 503);
+      }
+      return json({ removed: true, workspaceId, userId: targetUserId });
+    },
+  ],
+
+  'POST /api/integrations/github/start': [
+    requireAuth(),
+    async ctx => {
+      const config = await githubSecretStatus();
+      if (!config.clientIdConfigured || !config.clientSecretConfigured)
+        return error('GitHub identity linking is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in backend secrets first.', 503);
+      const [existing] = await db.get<GitHubIdentity>('github_identity_links', [ctx.user!.userId], { consistent: true });
+      if (existing) return error('A GitHub identity is already linked. Disconnect it before linking a different account.', 409);
+      const clientId = await secrets.readSecret(GITHUB_CLIENT_ID_SECRET);
+      const state = randomUUID();
+      const createdAt = new Date();
+      const [savedId] = await db.tx.add('github_oauth_states', [{
+        id: state, appUserId: ctx.user!.userId, purpose: 'identity_link',
+        status: 'pending', createdAt: createdAt.toISOString(),
+        expiresAt: new Date(createdAt.getTime() + 10 * 60 * 1000).toISOString(),
+      }]);
+      if (!savedId) return error('A secure one-time connection state could not be saved. Retry once.', 503);
+      const authorizationUrl = new URL('https://github.com/login/oauth/authorize');
+      authorizationUrl.searchParams.set('client_id', clientId);
+      authorizationUrl.searchParams.set('redirect_uri', GITHUB_CALLBACK_URL);
+      authorizationUrl.searchParams.set('state', state);
+      authorizationUrl.searchParams.set('allow_signup', 'false');
+      return json({ authorizationUrl: authorizationUrl.toString() });
+    },
+  ],
+
+  'GET /api/integrations/github/callback': [
+    async ctx => {
+      const state = ctx.query.state;
+      if (ctx.query.error) return githubCallbackRedirect('cancelled');
+      const code = ctx.query.code;
+      if (!state || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(state) || !code || code.length > 512)
+        return githubCallbackRedirect('failed');
+      const [savedState] = await db.get<GitHubOAuthState>('github_oauth_states', [state], { consistent: true });
+      if (!savedState || savedState.status !== 'pending' || savedState.purpose !== 'identity_link' ||
+          new Date(savedState.expiresAt).getTime() <= Date.now()) return githubCallbackRedirect('failed');
+      const [claimed] = await db.tx.update('github_oauth_states', [{
+        id: state, record: { status: 'processing' },
+        if: { status: 'pending', appUserId: savedState.appUserId },
+      }], { patch: true });
+      if (!claimed) return githubCallbackRedirect('failed');
+      try {
+        const clientId = await secrets.readSecret(GITHUB_CLIENT_ID_SECRET);
+        const clientSecret = await secrets.readSecret(GITHUB_CLIENT_SECRET_SECRET);
+        const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: GITHUB_CALLBACK_URL }),
+        });
+        if (!tokenResponse.ok) throw new Error('GitHub token exchange failed.');
+        const tokenPayload = await tokenResponse.json() as Record<string, unknown>;
+        if (typeof tokenPayload.access_token !== 'string' || tokenPayload.error) throw new Error('GitHub authorization failed.');
+        const accessToken = tokenPayload.access_token;
+        const userResponse = await fetch('https://api.github.com/user', {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: 'Bearer ' + accessToken,
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': 'ContribQuest',
+          },
+        });
+        if (!userResponse.ok) throw new Error('GitHub identity could not be verified.');
+        const githubUser = await userResponse.json() as Record<string, unknown>;
+        if (typeof githubUser.id !== 'number' || typeof githubUser.login !== 'string' ||
+            !Number.isSafeInteger(githubUser.id) || githubUser.id <= 0 ||
+            !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37})$/.test(githubUser.login)) throw new Error('GitHub returned an invalid identity.');
+        const githubUserId = String(githubUser.id);
+        const [existingLink] = await db.get<GitHubIdentity>('github_identity_links', [savedState.appUserId], { consistent: true });
+        const ownerId = 'ghu_' + githubUserId;
+        const [existingOwner] = await db.get<GitHubIdentityOwner>('github_identity_owners', [ownerId], { consistent: true });
+        if (existingLink) {
+          if (existingLink.githubUserId === githubUserId && existingOwner?.appUserId === savedState.appUserId) {
+            await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'consumed' }, if: { status: 'processing' } }], { patch: true });
+            return githubCallbackRedirect('linked');
+          }
+          await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'failed' }, if: { status: 'processing' } }], { patch: true });
+          return githubCallbackRedirect('already_linked');
+        }
+        if (existingOwner && existingOwner.appUserId !== savedState.appUserId) {
+          await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'failed' }, if: { status: 'processing' } }], { patch: true });
+          return githubCallbackRedirect('already_linked');
+        }
+        const linkedAt = new Date().toISOString();
+        const link: GitHubIdentity = { id: savedState.appUserId, appUserId: savedState.appUserId, githubUserId, githubLogin: githubUser.login, linkedAt };
+        const owner: GitHubIdentityOwner = { id: ownerId, appUserId: savedState.appUserId, githubUserId };
+        const operations = [
+          db.tx.add('github_identity_links', [link]),
+          ...(!existingOwner ? [db.tx.add('github_identity_owners', [owner])] : []),
+          db.tx.add('audit_events', [appendAuditEvent(savedState.appUserId, 'github.identity_linked', 'integration_identity', githubUserId)]),
+        ];
+        await db.transact(operations);
+        await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'consumed' }, if: { status: 'processing' } }], { patch: true });
+        return githubCallbackRedirect('linked');
+      } catch {
+        await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'failed' }, if: { status: 'processing' } }], { patch: true }).catch(() => []);
+        return githubCallbackRedirect('failed');
+      }
+    },
+  ],
+
+  'POST /api/integrations/github/disconnect': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      const [identity] = await db.get<GitHubIdentity>('github_identity_links', [user.userId], { consistent: true });
+      if (!identity) return error('No GitHub identity is linked to this account.', 404);
+      const ownerId = 'ghu_' + identity.githubUserId;
+      const [owner] = await db.get<GitHubIdentityOwner>('github_identity_owners', [ownerId], { consistent: true });
+      const operations = [
+        db.tx.delete('github_identity_links', [user.userId]),
+        ...(owner?.appUserId === user.userId ? [db.tx.delete('github_identity_owners', [ownerId])] : []),
+        db.tx.add('audit_events', [appendAuditEvent(user.userId, 'github.identity_disconnected', 'integration_identity', identity.githubUserId)]),
+      ];
+      try { await db.transact(operations); }
+      catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        return error('GitHub disconnect could not be confirmed. Refresh and check account settings.', 503);
+      }
+      return json({ disconnected: true });
+    },
   ],
 
   'GET /api/bounties': [
