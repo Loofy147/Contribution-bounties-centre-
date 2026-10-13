@@ -173,5 +173,26 @@
       "Return to ContribQuest after authorizing the account"
     ],
     "expected": "GitHub authorization is directed to the requested username; if the field is blank, GitHub is asked to show an account selector. The app account email remains unchanged and the linked identity is taken from GitHub's verified user response."
+  },
+  {
+    "name": "Connect GitHub through device authorization without callback redirects",
+    "viewport": "mobile",
+    "covers": [
+      "GitHub device authorization fallback",
+      "short-lived user verification code",
+      "identity bound to initiating ContribQuest user",
+      "pending authorization polling",
+      "device code expiry and cancellation"
+    ],
+    "description": "Verifies a mobile user can authorize GitHub through the device verification page and return to ContribQuest without relying on a callback redirect.",
+    "steps": [
+      "Enable Device Flow in the ContribQuest-WorkLink GitHub App settings",
+      "Sign in to ContribQuest and open Account & integrations",
+      "Select Use device code instead",
+      "Open the GitHub device authorization page and enter the displayed user code",
+      "Authorize the GitHub account that owns the working repositories",
+      "Return to ContribQuest and wait for automatic verification"
+    ],
+    "expected": "ContribQuest polls at GitHub's required interval, then displays the linked GitHub identity and verified email status. The temporary device code is not stored in plaintext, and no GitHub access token is stored in normal database records."
   }
 ]
