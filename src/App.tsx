@@ -242,6 +242,7 @@ function App() {
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMembership[]>([]);
   const [memberEmail, setMemberEmail] = useState('');
   const [memberRole, setMemberRole] = useState<'workspace_admin' | 'reviewer' | 'contributor' | 'observer'>('contributor');
+  const [githubLoginHint, setGithubLoginHint] = useState('');
 
   const getReviewDraft = (item: Contribution): ReviewDraft =>
     reviewDrafts[item.id] ?? {
@@ -422,7 +423,9 @@ function App() {
   const startGitHubConnection = async () => {
     setSecurityBusy(true); setError('');
     try {
-      const response = await api.post('/api/integrations/github/start', {});
+      const response = await api.post('/api/integrations/github/start', {
+        login: githubLoginHint.trim().replace(/^@/, '') || undefined,
+      });
       const url = response.data?.authorizationUrl;
       if (typeof url !== 'string' || !url.startsWith('https://github.com/login/oauth/authorize')) {
         throw new Error('The backend did not return a valid GitHub authorization URL.');
@@ -1597,9 +1600,16 @@ function App() {
             <button className="button button-muted" disabled={securityBusy} onClick={() => void disconnectGitHub()}>Disconnect identity</button>
           </> : <>
             <div className="settings-detail-list">
+              <div><span>ContribQuest sign-in email</span><strong>{settings?.account.email || user.email || 'Email scope unavailable'}</strong></div>
               <div><span>Client ID</span><strong>{settings?.github.clientIdConfigured?'Configured':'Missing'}</strong></div>
               <div><span>Client secret</span><strong>{settings?.github.clientSecretConfigured?'Configured':'Missing'}</strong></div>
               <div><span>Callback URL</span><code>{settings?.github.callbackUrl || 'https://contribquest-lygj1x.v2.appdeploy.ai/api/integrations/github/callback'}</code></div>
+            </div>
+            <div className="github-login-field">
+              <label>GitHub username to connect (optional)
+                <input value={githubLoginHint} onChange={event => setGithubLoginHint(event.target.value.replace(/^@/, ''))} placeholder="Loofy147" maxLength={39} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+              </label>
+              <p className="settings-footnote">Enter the GitHub username that owns the repositories, not its email address. Leave blank to choose an account at GitHub. Your ContribQuest email can be different; after authorization, verified GitHub email addresses are shown separately.</p>
             </div>
             {!settings?.github.configured && <div className="settings-notice"><Activity size={17}/><span>Register a GitHub App using the exact callback URL. Then set <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code> through AppDeploy secure backend-secret entry. Never paste credentials into chat or source.</span></div>}
             <button className="button button-dark" disabled={securityBusy || !settings?.github.configured} onClick={() => void startGitHubConnection()}>{securityBusy?'Preparing…':'Connect GitHub identity'} <ArrowUpRight size={15}/></button>
@@ -1987,8 +1997,7 @@ function App() {
                     value={bountyForm.repoUrl}
                     onChange={event =>
                       setBountyForm({
-                        ...bountyForm,
-                        repoUrl: event.target.value,
+                        ...bountyForm,                        repoUrl: event.target.value,
                       })
                     }
                     placeholder="Link to a doc, design, demo, repository, or reference"
@@ -1997,7 +2006,8 @@ function App() {
                 <label>
                   Skills, comma-separated
                   <input
-                    value={bountyForm.skills}                    onChange={event =>
+                    value={bountyForm.skills}
+                    onChange={event =>
                       setBountyForm({
                         ...bountyForm,
                         skills: event.target.value,
