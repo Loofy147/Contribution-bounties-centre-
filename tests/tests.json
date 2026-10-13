@@ -120,5 +120,21 @@
       "Confirm repository installation is separate from identity linking and owner access requires server-side allowlisting"
     ],
     "expected": "The existing account remains canonical; roles come from server state, missing GitHub secrets appear as not configured, the callback URL is displayed exactly, and the interface never claims GitHub is linked or allows self-promotion to platform owner."
+  },
+  {
+    "name": "Explain a rejected GitHub callback URL",
+    "viewport": "desktop",
+    "covers": [
+      "GitHub OAuth callback error classification",
+      "actionable connection failure message",
+      "callback URL exact-match configuration"
+    ],
+    "description": "Verifies a GitHub redirect URI mismatch returns a specific safe message rather than a generic connection failure.",
+    "steps": [
+      "Open https://contribquest-lygj1x.v2.appdeploy.ai/api/integrations/github/callback?error=redirect_uri_mismatch",
+      "Allow the callback to redirect back to ContribQuest",
+      "Read the GitHub connection status message"
+    ],
+    "expected": "ContribQuest explains that GitHub rejected the callback URL and shows the exact user-authorization callback URL to configure."
   }
 ]
