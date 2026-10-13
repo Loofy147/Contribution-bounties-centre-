@@ -103,6 +103,9 @@ type WorkData = {
   mySubmissions: Contribution[];
   myBounties: Bounty[];
   receivedSubmissions: Contribution[];
+  indexing?: boolean;
+  indexProgress?: { bountiesDone: boolean; contributionsDone: boolean };
+  hasMore?: { myBounties: boolean; mySubmissions: boolean; receivedSubmissions: boolean };
 };
 type View =
   | 'Overview'
@@ -117,6 +120,8 @@ const EMPTY_WORK: WorkData = {
   mySubmissions: [],
   myBounties: [],
   receivedSubmissions: [],
+  indexing: false,
+  indexProgress: { bountiesDone: true, contributionsDone: true },
 };
 
 const NAV: { name: View; icon: typeof Compass; hint?: string }[] = [
@@ -247,7 +252,14 @@ function App() {
       setUser(current);
       if (current) {
         const workResponse = await api.get('/api/my-work');
-        setWork(workResponse.data as WorkData);
+        let currentWork = workResponse.data as WorkData;
+        setWork(currentWork);
+        // Advance legacy indexing through multiple bounded API requests, not one unbounded scan.
+        for (let pass = 0; currentWork.indexing && pass < 2; pass += 1) {
+          const nextWorkResponse = await api.get('/api/my-work');
+          currentWork = nextWorkResponse.data as WorkData;
+          setWork(currentWork);
+        }
       } else {
         setWork(EMPTY_WORK);
       }
@@ -1563,6 +1575,17 @@ function App() {
               <span>{error}</span>
               <button onClick={() => setError('')} aria-label="Dismiss error">
                 <X size={15} />
+              </button>
+            </div>
+          )}
+          {user && work.indexing && (
+            <div className="indexing-banner" role="status">
+              <Activity size={16} />
+              <span>
+                Preparing your existing work in private, user-scoped indexes. Your records remain saved; some older items may appear as indexing progresses.
+              </span>
+              <button className="button button-small button-outline" onClick={() => void refreshData(false)} disabled={loading}>
+                Continue
               </button>
             </div>
           )}
