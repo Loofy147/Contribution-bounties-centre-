@@ -64,6 +64,8 @@ test('authenticated work views use private per-user indexes and bounded legacy m
   assert.ok(backend.includes('function userReceivedTable(userId: string)'));
   assert.ok(backend.includes('function advanceWorkIndexMigration(userId: string)'));
   assert.ok(backend.includes("'active_submissions'"));
+  assert.ok(backend.includes('confirmedGuard.contributionId === id'));
+  assert.ok(backend.includes('if (!migration.contributionsDone)'));
 
   const myWorkRoute = backend.slice(
     backend.indexOf("'GET /api/my-work'"),
