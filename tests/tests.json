@@ -42,16 +42,19 @@
       "contribution submission",
       "acceptance criteria snapshot",
       "written and linked evidence",
-      "My contributions persistence"
+      "My contributions persistence",
+      "user-scoped work indexes",
+      "bounded legacy work migration"
     ],
     "description": "Verifies submitted work is linked to the exact acceptance criteria agreed when the submission was made.",
     "steps": [
       "Sign in as a contributor who does not own an open community bounty",
       "Open a live bounty and read the acceptance criteria",
       "Submit a written explanation and optionally add an evidence link",
-      "Open My contributions and refresh"
+      "Open My contributions and refresh",
+      "If the existing-work indexing notice appears, use Continue until indexing is complete."
     ],
-    "expected": "The submission is pending review and retains the bounty's acceptance criteria snapshot."
+    "expected": "The submission is pending review and retains the bounty's acceptance-criteria snapshot. Private per-user work views show the signed-in user's submissions and received reviews; existing records remain stored while bounded migration progresses."
   },
   {
     "name": "Request changes, revise, and accept only the compliant version",
