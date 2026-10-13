@@ -98,7 +98,7 @@ test('account roles and GitHub identity linking enforce server-side boundaries',
     "'POST /api/integrations/github/start'",
     "'GET /api/integrations/github/callback'",
     "'POST /api/integrations/github/disconnect'",
-  ]) assert.ok(backend.includes(route), \`missing route \${route}\`);
+  ]) assert.ok(backend.includes(route), 'missing route: ' + route);
 
   assert.ok(backend.includes("secrets.readSecret(GITHUB_CLIENT_SECRET_SECRET)"));
   assert.ok(backend.includes("const PLATFORM_OWNER_SECRET = 'PLATFORM_OWNER_EMAILS'"));
@@ -113,7 +113,7 @@ test('account roles and GitHub identity linking enforce server-side boundaries',
   assert.ok(backend.includes('A workspace must retain at least one administrator.'));
   assert.ok(backend.includes('Only a platform owner can remove a workspace administrator.'));
   assert.ok(backend.includes('repository installation is a separate pending step'));
-  assert.doesNotMatch(backend, /record:\\s*\\{[^}]*accessToken/s);
+  assert.doesNotMatch(backend, /record:\s*\{[^}]*accessToken/s);
 });
 
 test('package exposes a dependency-free contract test command', () => {
