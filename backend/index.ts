@@ -5,6 +5,7 @@ import {
   requireAuth,
   db,
   increment,
+  isAppDatabaseError,
 } from '@appdeploy/sdk';
 
 type Bounty = {
@@ -546,7 +547,8 @@ export const handler = router({
         const [bountyIds, indexIds] = await db.transact([bountyWrite, bountyIndexWrite]);
         if (!bountyIds[0] || !indexIds[0])
           return error('The bounty could not be saved. Please retry.', 503);
-      } catch {
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
         return error('The bounty could not be saved atomically. Refresh and retry.', 503);
       }
       return json({ bounty: persisted }, 201);
@@ -672,11 +674,20 @@ export const handler = router({
         ]);
         if (!contributionIds[0] || !submitterIds[0] || !ownerIds[0] || !guardIds[0])
           return error('Your submission could not be saved atomically. Please refresh and retry.', 503);
-      } catch {
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
         const [confirmedGuard] = await db.get<ActiveSubmission>('active_submissions', [guardId], {
           consistent: true,
         });
         if (confirmedGuard) {
+          const [existingContribution] = await db.get<Contribution>(
+            'contributions',
+            [confirmedGuard.contributionId],
+            { consistent: true }
+          );
+          if (existingContribution) {
+            return json({ contribution: { ...existingContribution, id: confirmedGuard.contributionId } }, 201);
+          }
           return error(
             'You already have an active submission or requested revision for this bounty. Use the existing submission to respond to review feedback.',
             409
@@ -784,8 +795,13 @@ export const handler = router({
             if: { status: 'needs_changes', submitterId: user.userId },
           }], { patch: true }),
         ]);
-      } catch {
-        return error('The submission changed while you were editing. Refresh and try again.', 409);
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        const [saved] = await db.get<Contribution>('contributions', [ctx.params.id], { consistent: true });
+        if (saved?.status === 'pending' && saved.revisionNumber === revisionNumber) {
+          return json({ resubmitted: true, status: 'pending', revisionNumber });
+        }
+        return error('The resubmission could not be confirmed. Refresh and check the current contribution before retrying.', 503);
       }
       return json({ resubmitted: true, status: 'pending', revisionNumber });
     },
@@ -898,10 +914,20 @@ export const handler = router({
             profileUpdate,
             guardDelete,
           ]);
-        } catch {
+        } catch (cause: unknown) {
+          if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+          const [saved] = await db.get<Contribution>('contributions', [ctx.params.id], { consistent: true });
+          if (saved?.status === 'accepted') {
+            return json({
+              reviewed: true,
+              status: 'accepted',
+              xpAwarded: 50,
+              message: 'Contribution accepted. 50 XP awarded.',
+            });
+          }
           return error(
-            'The review could not be committed. The contribution or bounty may have changed; refresh and check its current status.',
-            409
+            'The review could not be confirmed. Refresh and check the current contribution before retrying.',
+            503
           );
         }
         return json({
@@ -947,8 +973,11 @@ export const handler = router({
         } else {
           await db.transact([contributionUpdate, submitterIndexUpdate, ownerIndexUpdate]);
         }
-      } catch {
-        return error('This contribution changed while the review was being committed. Refresh and check its current status.', 409);
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        const [saved] = await db.get<Contribution>('contributions', [ctx.params.id], { consistent: true });
+        if (saved?.status === status) return json({ reviewed: true, status });
+        return error('The review could not be confirmed. Refresh and check the current contribution before retrying.', 503);
       }
       return json({ reviewed: true, status });
     },
