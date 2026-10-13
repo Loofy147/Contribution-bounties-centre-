@@ -2190,3 +2190,37 @@ a {
     right: 12px;
   }
 }
+
+
+.indexing-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: #53615a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.indexing-banner > span {
+  flex: 1;
+}
+.indexing-banner > svg {
+  flex-shrink: 0;
+  color: #657744;
+}
+@media (max-width: 640px) {
+  .indexing-banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .indexing-banner > span {
+    flex-basis: calc(100% - 32px);
+  }
+  .indexing-banner > button {
+    margin-left: 28px;
+  }
+}
