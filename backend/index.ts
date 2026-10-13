@@ -91,6 +91,42 @@ const GITHUB_CALLBACK_URL = APP_BASE_URL + '/api/integrations/github/callback';
 const PLATFORM_OWNER_SECRET = 'PLATFORM_OWNER_EMAILS';
 const GITHUB_CLIENT_ID_SECRET = 'GITHUB_CLIENT_ID';
 const GITHUB_CLIENT_SECRET_SECRET = 'GITHUB_CLIENT_SECRET';
+const GITHUB_PAT_SECRET = 'GITHUB_PAT';
+const GITHUB_PAT_REPOSITORIES = ['Contribution-bounties-centre-', 'contribution-network'] as const;
+type GitHubPatRepository = typeof GITHUB_PAT_REPOSITORIES[number];
+
+async function readConfiguredGitHubPat(): Promise<string> {
+  const names = await secrets.listSecretNames();
+  if (!names.includes(GITHUB_PAT_SECRET)) throw new Error('github_pat_not_configured');
+  const token = await secrets.readSecret(GITHUB_PAT_SECRET);
+  if (!token || !token.trim()) throw new Error('github_pat_empty');
+  return token.trim();
+}
+
+function validGitHubPatPath(value: unknown): string | null {
+  const path = textField(value, 500);
+  if (!path || path.startsWith('/') || path.split('/').some(part =>
+    !part || part === '.' || part === '..' || part.includes('\\'))) return null;
+  return path;
+}
+
+function isGitHubPatRepository(value: unknown): value is GitHubPatRepository {
+  return typeof value === 'string' &&
+    GITHUB_PAT_REPOSITORIES.includes(value as GitHubPatRepository);
+}
+
+async function githubPatFetch(token: string, url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: 'Bearer ' + token,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'ContribQuest',
+      ...(init.headers as Record<string, string> | undefined),
+    },
+  });
+}
 const WORKSPACE_ROLES: WorkspaceRole[] = ['workspace_admin', 'reviewer', 'contributor', 'observer'];
 
 
@@ -780,6 +816,228 @@ export const handler = router({
         return error('Membership removal could not be confirmed. Refresh and inspect the workspace before retrying.', 503);
       }
       return json({ removed: true, workspaceId, userId: targetUserId });
+    },
+  ],
+
+  'POST /api/integrations/github/pat/verify': [
+    requireAuth(),
+    async ctx => {
+      if (!(await isPlatformOwner(ctx.user!)))
+        return error('Only the configured platform owner can verify GitHub repository credentials.', 403);
+      let token: string;
+      try {
+        token = await readConfiguredGitHubPat();
+      } catch (cause: unknown) {
+        const reason = cause instanceof Error ? cause.message : '';
+        return error(reason === 'github_pat_not_configured' || reason === 'github_pat_empty'
+          ? 'GITHUB_PAT is not configured. Add it through the secure backend-secret form.'
+          : 'ContribQuest could not read GITHUB_PAT from backend secrets.', 503);
+      }
+
+      try {
+        const profileResponse = await githubPatFetch(token, 'https://api.github.com/user');
+        if (!profileResponse.ok) {
+          const message = profileResponse.status === 401
+            ? 'GitHub rejected GITHUB_PAT. Revoke the token if it is incorrect, then submit a replacement through the secure form.'
+            : profileResponse.status === 403
+              ? 'GitHub denied the PAT identity check. Check token approval, expiration and account policy.'
+              : 'GitHub could not verify the PAT identity.';
+          return json({ configured: true, verified: false, message });
+        }
+        const profile = await profileResponse.json() as Record<string, unknown>;
+        if (typeof profile.id !== 'number' || typeof profile.login !== 'string' ||
+            !Number.isSafeInteger(profile.id) || profile.id <= 0) {
+          return json({ configured: true, verified: false, message: 'GitHub returned an invalid account identity for this PAT.' });
+        }
+
+        const repositories = await Promise.all(GITHUB_PAT_REPOSITORIES.map(async repository => {
+          const response = await githubPatFetch(token, 'https://api.github.com/repos/Loofy147/' + encodeURIComponent(repository));
+          if (!response.ok) {
+            return {
+              repositoryFullName: 'Loofy147/' + repository,
+              accessible: false, canRead: false, canWrite: false,
+              httpStatus: response.status,
+              message: response.status === 404
+                ? 'Repository is not visible to this token or account.'
+                : response.status === 403
+                  ? 'GitHub denied repository metadata access; check selected repositories and token permissions.'
+                  : 'GitHub could not verify repository access.',
+            };
+          }
+          const detail = await response.json() as Record<string, unknown>;
+          const permissions = detail.permissions && typeof detail.permissions === 'object'
+            ? detail.permissions as Record<string, unknown> : {};
+          const repositoryRole = permissions.admin === true ? 'admin'
+            : permissions.maintain === true ? 'maintain'
+            : permissions.push === true ? 'write'
+            : permissions.triage === true ? 'triage'
+            : 'read';
+          return {
+            repositoryFullName: 'Loofy147/' + repository,
+            accessible: true,
+            repositoryRole,
+            defaultBranch: typeof detail.default_branch === 'string' ? detail.default_branch : 'main',
+            private: detail.private === true,
+            note: 'This is the account repository role, not proof of every PAT endpoint permission.',
+          };
+        }));
+        const usable = repositories.every(repository => repository.accessible);
+        return json({
+          configured: true,
+          verified: true,
+          usable,
+          login: profile.login,
+          id: profile.id,
+          repositories,
+          message: usable
+            ? 'PAT identity verified and both configured working repositories are visible. Repository role and subsequent file/API operations are reported separately.'
+            : 'PAT identity verified, but one or more configured repositories are not accessible to this token.',
+        });
+      } catch {
+        console.warn('github_pat_verification_failed');
+        return error('GitHub PAT verification encountered a network or API error. Retry without sharing the token.', 502);
+      }
+    },
+  ],
+
+  'POST /api/integrations/github/pat/file/read': [
+    requireAuth(),
+    async ctx => {
+      if (!(await isPlatformOwner(ctx.user!)))
+        return error('Only the configured platform owner can read repositories through GITHUB_PAT.', 403);
+      const body = objectBody(ctx.body);
+      const repository = body.repo;
+      const path = validGitHubPatPath(body.path);
+      const requestedBranch = textField(body.branch, 250);
+      if (!isGitHubPatRepository(repository) || !path)
+        return error('Choose one of the configured repositories and enter a valid relative file path.', 400);
+
+      let token: string;
+      try { token = await readConfiguredGitHubPat(); }
+      catch { return error('GITHUB_PAT is not configured or could not be read by the backend.', 503); }
+
+      try {
+        const repoResponse = await githubPatFetch(token, 'https://api.github.com/repos/Loofy147/' + encodeURIComponent(repository));
+        if (!repoResponse.ok) return error(repoResponse.status === 404
+          ? 'This repository is not available to GITHUB_PAT.'
+          : 'GitHub denied repository access. Run PAT verification and check token permissions.', 403);
+        const repoDetail = await repoResponse.json() as Record<string, unknown>;
+        const defaultBranch = typeof repoDetail.default_branch === 'string' ? repoDetail.default_branch : 'main';
+        const branch = requestedBranch || defaultBranch;
+        if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,249}$/.test(branch) || branch.split('/').some(part => !part || part === '.' || part === '..'))
+          return error('Enter a valid branch name.', 400);
+        const fileUrl = 'https://api.github.com/repos/Loofy147/' + encodeURIComponent(repository) +
+          '/contents/' + path.split('/').map(encodeURIComponent).join('/') + '?ref=' + encodeURIComponent(branch);
+        const response = await githubPatFetch(token, fileUrl);
+        if (!response.ok) return error(response.status === 404
+          ? 'File or branch not found, or this token lacks Contents: Read permission.'
+          : response.status === 403
+            ? 'GitHub denied file access. Check Contents: Read permission and token approval.'
+            : 'GitHub file read failed. Retry and inspect repository access.', response.status === 404 ? 404 : 502);
+        const payload = await response.json() as Record<string, unknown>;
+        if (payload.type !== 'file' || typeof payload.content !== 'string' ||
+            (typeof payload.size === 'number' && payload.size > 180000))
+          return error('This path is not a supported text file or it exceeds the 180 KB editor limit.', 413);
+        const content = Buffer.from(payload.content.replace(/\s/g, ''), 'base64').toString('utf8');
+        return json({
+          repositoryFullName: 'Loofy147/' + repository,
+          path,
+          branch,
+          defaultBranch,
+          content,
+          sha: typeof payload.sha === 'string' ? payload.sha : undefined,
+          size: typeof payload.size === 'number' ? payload.size : Buffer.byteLength(content, 'utf8'),
+        });
+      } catch {
+        console.warn('github_pat_file_read_failed');
+        return error('GitHub file read failed. No credentials were returned to the client.', 502);
+      }
+    },
+  ],
+
+  'POST /api/integrations/github/pat/file/write': [
+    requireAuth(),
+    async ctx => {
+      if (!(await isPlatformOwner(ctx.user!)))
+        return error('Only the configured platform owner can write repository files through GITHUB_PAT.', 403);
+      const body = objectBody(ctx.body);
+      const repository = body.repo;
+      const path = validGitHubPatPath(body.path);
+      const content = typeof body.content === 'string' ? body.content : null;
+      const message = textField(body.message, 200);
+      const requestedBranch = textField(body.branch, 250);
+      if (!isGitHubPatRepository(repository) || !path || content === null || !message || message.length < 5)
+        return error('Choose a configured repository and valid path, file content and commit message.', 400);
+      if (Buffer.byteLength(content, 'utf8') > 180000)
+        return error('File content exceeds the 180 KB editor limit.', 413);
+
+      let token: string;
+      try { token = await readConfiguredGitHubPat(); }
+      catch { return error('GITHUB_PAT is not configured or could not be read by the backend.', 503); }
+
+      try {
+        const repoResponse = await githubPatFetch(token, 'https://api.github.com/repos/Loofy147/' + encodeURIComponent(repository));
+        if (!repoResponse.ok) return error(repoResponse.status === 404
+          ? 'This repository is not available to GITHUB_PAT.'
+          : 'GitHub denied repository access. Run PAT verification and check token permissions.', 403);
+        const repoDetail = await repoResponse.json() as Record<string, unknown>;
+        const defaultBranch = typeof repoDetail.default_branch === 'string' ? repoDetail.default_branch : 'main';
+        const branch = requestedBranch || defaultBranch;
+        if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,249}$/.test(branch) || branch.split('/').some(part => !part || part === '.' || part === '..'))
+          return error('Enter a valid branch name.', 400);
+
+        const fileUrl = 'https://api.github.com/repos/Loofy147/' + encodeURIComponent(repository) +
+          '/contents/' + path.split('/').map(encodeURIComponent).join('/') + '?ref=' + encodeURIComponent(branch);
+        const currentResponse = await githubPatFetch(token, fileUrl);
+        let existingSha: string | undefined;
+        if (currentResponse.ok) {
+          const currentPayload = await currentResponse.json() as Record<string, unknown>;
+          if (currentPayload.type !== 'file' || typeof currentPayload.sha !== 'string')
+            return error('The selected path is not an existing file. Choose a file path, not a directory.', 400);
+          existingSha = currentPayload.sha;
+        } else if (currentResponse.status !== 404) {
+          return error(currentResponse.status === 403
+            ? 'GitHub denied file access. Check Contents: Read and Write permissions.'
+            : 'GitHub could not verify the current file before writing; no update was sent.', 502);
+        }
+
+        const updateBody = {
+          message,
+          content: Buffer.from(content, 'utf8').toString('base64'),
+          branch,
+          ...(existingSha ? { sha: existingSha } : {}),
+        };
+        const writeResponse = await githubPatFetch(token, 'https://api.github.com/repos/Loofy147/' +
+          encodeURIComponent(repository) + '/contents/' + path.split('/').map(encodeURIComponent).join('/'), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updateBody),
+          });
+        const writePayload = await writeResponse.json().catch(() => ({})) as Record<string, unknown>;
+        if (!writeResponse.ok) {
+          const status = writeResponse.status === 401 ? 401 : writeResponse.status === 403 ? 403 : writeResponse.status === 404 ? 404 : 502;
+          return error(status === 403
+            ? 'GitHub denied this write. Check Contents: Write, Workflows: Write for workflow files, branch protection and organization policy.'
+            : status === 404
+              ? 'GitHub could not find the repository, branch, or path required for this commit.'
+              : 'GitHub rejected the file update. Check the branch, permissions and repository rules.', status);
+        }
+        const commit = writePayload.commit && typeof writePayload.commit === 'object'
+          ? writePayload.commit as Record<string, unknown> : {};
+        return json({
+          written: true,
+          repositoryFullName: 'Loofy147/' + repository,
+          path,
+          branch,
+          commitSha: typeof commit.sha === 'string' ? commit.sha : undefined,
+          commitUrl: typeof commit.html_url === 'string' ? commit.html_url : undefined,
+          contentSha: writePayload.content && typeof writePayload.content === 'object'
+            ? (writePayload.content as Record<string, unknown>).sha : undefined,
+        });
+      } catch {
+        console.warn('github_pat_file_write_failed');
+        return error('GitHub file update did not complete cleanly. Refresh the file before retrying; no credentials were returned.', 502);
+      }
     },
   ],
 
@@ -1739,8 +1997,7 @@ export const handler = router({
           status: 'accepted',
           xpAwarded: 50,
           message: 'Contribution accepted. 50 XP awarded.',
-        });
-      }
+        });      }
 
       const reviewPatch = {
         status,
