@@ -77,6 +77,11 @@ type GitHubOAuthState = {
   status: 'pending' | 'processing' | 'consumed' | 'failed' | 'cancelled';
   createdAt: string; expiresAt: string;
 };
+type GitHubDeviceFlow = {
+  id: string; appUserId: string; deviceCodeHash: string; userCode: string;
+  status: 'pending' | 'consumed' | 'failed' | 'expired';
+  createdAt: string; expiresAt: string; intervalSeconds: number;
+};
 type AuditEvent = {
   id: string; actorUserId: string; action: string; resourceType: string; resourceId: string;
   targetUserId?: string; role?: string; createdAt: string;
@@ -825,6 +830,261 @@ export const handler = router({
               : 'ContribQuest could not prepare GitHub authorization. Refresh Account & integrations and retry.',
           503
         );
+      }
+    },
+  ],
+
+  'POST /api/integrations/github/device/start': [
+    requireAuth(),
+    async ctx => {
+      let stage = 'configuration';
+      try {
+        const config = await githubSecretStatus();
+        if (!config.clientIdConfigured)
+          return error('GitHub device authorization is not configured. Check GITHUB_CLIENT_ID.', 503);
+        const [existing] = await db.get<GitHubIdentity>('github_identity_links', [ctx.user!.userId], { consistent: true });
+        if (existing)
+          return error('A GitHub identity is already linked. Disconnect it before linking a different account.', 409);
+
+        const clientId = await secrets.readSecret(GITHUB_CLIENT_ID_SECRET);
+        if (!clientId.trim()) return error('The GitHub Client ID is empty. Update it from the ContribQuest-WorkLink GitHub App.', 503);
+
+        stage = 'device_code_request';
+        const codeResponse = await fetch('https://github.com/login/device/code', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'ContribQuest',
+          },
+          body: new URLSearchParams({ client_id: clientId.trim() }),
+        });
+        const codePayload = await codeResponse.json() as Record<string, unknown>;
+        const providerError = typeof codePayload.error === 'string' ? codePayload.error : '';
+        if (providerError === 'device_flow_disabled')
+          return error('GitHub Device Flow is disabled. In GitHub Settings → Developer settings → GitHub Apps → ContribQuest-WorkLink, enable Device Flow and save, then retry.', 409);
+        if (!codeResponse.ok || providerError ||
+            typeof codePayload.device_code !== 'string' ||
+            typeof codePayload.user_code !== 'string' ||
+            typeof codePayload.verification_uri !== 'string' ||
+            typeof codePayload.expires_in !== 'number') {
+          console.warn('github_device_flow_start_rejected', {
+            status: providerError === 'incorrect_client_credentials' ? 'client_id_rejected' : 'provider_rejected',
+          });
+          return error('GitHub could not start device authorization. Verify the GitHub App Client ID and that Device Flow is enabled.', 502);
+        }
+
+        const deviceCode = codePayload.device_code;
+        const userCode = codePayload.user_code;
+        if (!/^[A-Za-z0-9_-]{20,128}$/.test(deviceCode) ||
+            !/^[A-Z0-9]{4,6}-[A-Z0-9]{4,6}$/i.test(userCode) ||
+            codePayload.verification_uri !== 'https://github.com/login/device') {
+          console.warn('github_device_flow_start_invalid_payload');
+          return error('GitHub returned an invalid device authorization response. Please retry.', 502);
+        }
+
+        const flowId = randomUUID();
+        const createdAt = new Date();
+        const expiresIn = Math.max(60, Math.min(codePayload.expires_in, 1800));
+        const intervalSeconds = typeof codePayload.interval === 'number'
+          ? Math.max(5, Math.min(codePayload.interval, 60))
+          : 5;
+        stage = 'state_write';
+        const [savedId] = await db.tx.add('github_device_flows', [{
+          id: flowId,
+          appUserId: ctx.user!.userId,
+          deviceCodeHash: createHash('sha256').update(deviceCode).digest('hex'),
+          userCode,
+          status: 'pending',
+          createdAt: createdAt.toISOString(),
+          expiresAt: new Date(createdAt.getTime() + expiresIn * 1000).toISOString(),
+          intervalSeconds,
+        }]);
+        if (!savedId) return error('ContribQuest could not save the temporary device-flow state. Refresh and retry.', 503);
+        return json({
+          flowId,
+          deviceCode,
+          userCode,
+          verificationUri: 'https://github.com/login/device',
+          expiresIn,
+          intervalSeconds,
+        });
+      } catch {
+        console.warn('github_device_flow_start_failed', { stage });
+        return error(
+          stage === 'state_write'
+            ? 'ContribQuest could not save the temporary device authorization. Refresh and retry.'
+            : 'ContribQuest could not prepare GitHub device authorization. Verify the GitHub App Client ID and Device Flow setting.',
+          503
+        );
+      }
+    },
+  ],
+
+  'POST /api/integrations/github/device/poll': [
+    requireAuth(),
+    async ctx => {
+      const body = objectBody(ctx.body);
+      const flowId = textField(body.flowId, 64);
+      const deviceCode = textField(body.deviceCode, 128);
+      if (!flowId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(flowId) ||
+          !deviceCode || !/^[A-Za-z0-9_-]{20,128}$/.test(deviceCode))
+        return error('The device authorization session is invalid. Start a new connection.', 400);
+
+      const user = ctx.user!;
+      const [flow] = await db.get<GitHubDeviceFlow>('github_device_flows', [flowId], { consistent: true });
+      if (!flow || flow.appUserId !== user.userId ||
+          flow.deviceCodeHash !== createHash('sha256').update(deviceCode).digest('hex'))
+        return error('The device authorization session could not be verified. Start a new connection.', 403);
+      if (flow.status === 'consumed') return json({ status: 'linked' });
+      if (flow.status === 'failed') return json({ status: 'failed', message: 'This GitHub device authorization has already failed. Start a new connection.' });
+      if (flow.status === 'expired' || new Date(flow.expiresAt).getTime() <= Date.now()) {
+        await db.tx.update('github_device_flows', [{
+          id: flowId, record: { status: 'expired' }, if: { status: 'pending', appUserId: user.userId },
+        }], { patch: true });
+        return json({ status: 'expired', message: 'The GitHub device code expired. Start a new connection.' });
+      }
+      if (flow.status !== 'pending') return json({ status: 'failed', message: 'This GitHub device authorization is not pending.' });
+
+      let stage: 'credentials' | 'token_exchange' | 'github_profile' | 'github_email' | 'persistence' = 'credentials';
+      try {
+        const clientId = await secrets.readSecret(GITHUB_CLIENT_ID_SECRET);
+        const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'ContribQuest',
+          },
+          body: new URLSearchParams({
+            client_id: clientId.trim(),
+            device_code: deviceCode,
+            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          }),
+        });
+        stage = 'token_exchange';
+        const tokenPayload = await tokenResponse.json() as Record<string, unknown>;
+        const oauthError = typeof tokenPayload.error === 'string' ? tokenPayload.error : '';
+        if (oauthError === 'authorization_pending') {
+          return json({ status: 'pending', intervalSeconds: flow.intervalSeconds });
+        }
+        if (oauthError === 'slow_down') {
+          const nextInterval = Math.min(flow.intervalSeconds + 5, 60);
+          await db.tx.update('github_device_flows', [{
+            id: flowId, record: { intervalSeconds: nextInterval },
+            if: { status: 'pending', appUserId: user.userId },
+          }], { patch: true });
+          return json({ status: 'pending', intervalSeconds: nextInterval });
+        }
+
+        const finishWithError = async (status: 'failed' | 'expired', message: string) => {
+          await db.tx.update('github_device_flows', [{
+            id: flowId, record: { status }, if: { status: 'pending', appUserId: user.userId },
+          }], { patch: true });
+          return json({ status, message });
+        };
+        if (oauthError === 'expired_token') return finishWithError('expired', 'The GitHub device code expired. Start a new connection.');
+        if (oauthError === 'access_denied') return finishWithError('failed', 'GitHub authorization was denied. Start a new connection when ready.');
+        if (oauthError === 'device_flow_disabled')
+          return finishWithError('failed', 'GitHub Device Flow is disabled. Enable it in the ContribQuest-WorkLink GitHub App settings, save, and retry.');
+        if (oauthError === 'incorrect_client_credentials')
+          return finishWithError('failed', 'GitHub rejected the Client ID. Verify it belongs to ContribQuest-WorkLink.');
+        if (!tokenResponse.ok || oauthError || typeof tokenPayload.access_token !== 'string' || !tokenPayload.access_token)
+          return finishWithError('failed', 'GitHub could not complete device authorization. Verify Device Flow is enabled and retry.');
+
+        const accessToken = tokenPayload.access_token as string;
+        stage = 'github_profile';
+        const userResponse = await fetch('https://api.github.com/user', {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: 'Bearer ' + accessToken,
+            'X-GitHub-Api-Version': '2026-03-10',
+            'User-Agent': 'ContribQuest',
+          },
+        });
+        if (!userResponse.ok) {
+          console.warn('github_device_profile_rejected', { status: userResponse.status });
+          return finishWithError('failed', 'GitHub authorized the device, but ContribQuest could not verify the GitHub profile.');
+        }
+        const githubUser = await userResponse.json() as Record<string, unknown>;
+        if (typeof githubUser.id !== 'number' || typeof githubUser.login !== 'string' ||
+            !Number.isSafeInteger(githubUser.id) || githubUser.id <= 0 ||
+            !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(githubUser.login)) {
+          return finishWithError('failed', 'GitHub returned an identity that ContribQuest could not validate.');
+        }
+
+        stage = 'github_email';
+        const emailResponse = await fetch('https://api.github.com/user/emails', {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: 'Bearer ' + accessToken,
+            'X-GitHub-Api-Version': '2026-03-10',
+            'User-Agent': 'ContribQuest',
+          },
+        });
+        let verifiedEmails: string[] = [];
+        let primaryEmail: string | undefined;
+        let emailAccessStatus: 'available' | 'permission_required' | 'unavailable' =
+          emailResponse.status === 403 ? 'permission_required' : 'unavailable';
+        if (emailResponse.ok) {
+          const emailPayload = await emailResponse.json() as unknown;
+          if (Array.isArray(emailPayload)) {
+            const verifiedRecords = emailPayload.filter((item): item is Record<string, unknown> =>
+              Boolean(item) && typeof item === 'object' && !Array.isArray(item) &&
+              item.verified === true && Boolean(normalizeEmail(item.email))
+            );
+            verifiedEmails = Array.from(new Set(verifiedRecords
+              .map(item => normalizeEmail(item.email))
+              .filter((email): email is string => Boolean(email))));
+            primaryEmail = normalizeEmail(verifiedRecords.find(item => item.primary === true)?.email) || undefined;
+            emailAccessStatus = 'available';
+          }
+        }
+
+        stage = 'persistence';
+        const githubUserId = String(githubUser.id);
+        const [existingLink] = await db.get<GitHubIdentity>('github_identity_links', [user.userId], { consistent: true });
+        const ownerId = 'ghu_' + githubUserId;
+        const [existingOwner] = await db.get<GitHubIdentityOwner>('github_identity_owners', [ownerId], { consistent: true });
+        if (existingOwner && existingOwner.appUserId !== user.userId) {
+          await finishWithError('failed', 'This GitHub identity is already linked to a different ContribQuest account.');
+          return json({ status: 'already_linked', message: 'This GitHub identity is already linked to a different ContribQuest account.' });
+        }
+        if (existingLink && existingLink.githubUserId !== githubUserId) {
+          await finishWithError('failed', 'A different GitHub identity is already linked to this ContribQuest account. Disconnect it first.');
+          return json({ status: 'already_linked', message: 'A different GitHub identity is already linked to this ContribQuest account. Disconnect it first.' });
+        }
+
+        const linkedAt = existingLink?.linkedAt || new Date().toISOString();
+        const link: GitHubIdentity = {
+          id: user.userId, appUserId: user.userId, githubUserId, githubLogin: githubUser.login,
+          verifiedEmails, ...(primaryEmail ? { primaryEmail } : {}),
+          emailAccessStatus, linkedAt,
+        };
+        const owner: GitHubIdentityOwner = { id: ownerId, appUserId: user.userId, githubUserId };
+        const operations = [
+          db.tx.add('github_identity_links', [link]),
+          ...(!existingOwner ? [db.tx.add('github_identity_owners', [owner])] : []),
+          db.tx.add('audit_events', [appendAuditEvent(user.userId, 'github.identity_linked', 'integration_identity', githubUserId)]),
+          db.tx.update('github_device_flows', [{
+            id: flowId, record: { status: 'consumed' }, if: { status: 'pending', appUserId: user.userId },
+          }], { patch: true }),
+        ];
+        const outcome = await db.transact(operations);
+        if (!outcome[outcome.length - 1]) {
+          return json({ status: 'failed', message: 'The GitHub link could not be committed. Refresh and inspect Account & integrations before retrying.' });
+        }
+        return json({ status: 'linked', githubLogin: githubUser.login, githubUserId, emailAccessStatus });
+      } catch {
+        console.warn('github_device_flow_poll_failed', { stage });
+        return json({
+          status: 'failed',
+          message: stage === 'credentials'
+            ? 'ContribQuest could not read its GitHub Client ID. Check backend secrets.'
+            : stage === 'persistence'
+              ? 'GitHub identity was verified, but ContribQuest could not save the link. Refresh and inspect Account & integrations.'
+              : 'GitHub device authorization could not be completed. Retry with a new device code.',
+        });
       }
     },
   ],
