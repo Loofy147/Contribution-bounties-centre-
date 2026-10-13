@@ -111,6 +111,7 @@ test('account roles and GitHub identity linking enforce server-side boundaries',
   assert.ok(backend.includes("userWorkspaceMembershipsTable(targetAccount.userId)"));
   assert.ok(backend.includes('The target must sign in to ContribQuest once before they can be assigned a role.'));
   assert.ok(backend.includes('A workspace must retain at least one administrator.'));
+  assert.ok(backend.includes('Only a platform owner can remove a workspace administrator.'));
   assert.ok(backend.includes('repository installation is a separate pending step'));
   assert.doesNotMatch(backend, /record:\\s*\\{[^}]*accessToken/s);
 });
