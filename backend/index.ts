@@ -60,6 +60,194 @@ type ReviewEvent = {
 };
 type Profile = { displayName: string; xp: number; acceptedCount: number };
 
+type WorkIndexMigration = {
+  id: string;
+  userId: string;
+  bountiesDone: boolean;
+  bountiesCursor?: string;
+  contributionsDone: boolean;
+  contributionsCursor?: string;
+};
+type ActiveSubmission = {
+  id: string;
+  contributionId: string;
+  bountyId: string;
+  submitterId: string;
+  createdAt: string;
+  status: Contribution['status'];
+};
+
+function userPartitionKey(userId: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+    throw new Error('Authenticated user ID did not match the expected UUID shape.');
+  }
+  return userId.replace(/-/g, '').toLowerCase();
+}
+function userBountiesTable(userId: string): string {
+  return 'user_bounties_' + userPartitionKey(userId);
+}
+function userSubmissionsTable(userId: string): string {
+  return 'user_submissions_' + userPartitionKey(userId);
+}
+function userReceivedTable(userId: string): string {
+  return 'user_received_' + userPartitionKey(userId);
+}
+function submissionGuardId(bountyId: string, userId: string): string {
+  return 'active_' + userPartitionKey(userId) + '_' + encodeURIComponent(bountyId);
+}
+function newRecordId(prefix: string): string {
+  return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 14);
+}
+async function ensureIndexRecords<T extends { id: string }>(table: string, records: T[]): Promise<void> {
+  const unique = new Map<string, T>();
+  for (const record of records) unique.set(record.id, record);
+  const rows = Array.from(unique.values());
+  if (!rows.length) return;
+
+  const existing = await db.get<Record<string, unknown>>(
+    table,
+    rows.map(row => row.id),
+    { consistent: true }
+  );
+  const missing = rows.filter((_, index) => !existing[index]);
+  if (!missing.length) return;
+
+  const created = await db.tx.add(
+    table,
+    missing.map(row => ({ ...row }))
+  );
+  const uncertainIds = missing
+    .filter((_, index) => created[index] === null)
+    .map(row => row.id);
+  if (uncertainIds.length) {
+    const confirmed = await db.get<Record<string, unknown>>(
+      table,
+      uncertainIds,
+      { consistent: true }
+    );
+    if (confirmed.some(row => !row)) {
+      throw new Error('A scoped work-index record could not be confirmed after a write conflict.');
+    }
+  }
+}
+function activeSubmissionRecord(contributionId: string, contribution: Contribution): ActiveSubmission | null {
+  if (
+    contribution.status !== 'pending' &&
+    contribution.status !== 'accepted' &&
+    contribution.status !== 'needs_changes'
+  ) {
+    return null;
+  }
+  return {
+    id: submissionGuardId(contribution.bountyId, contribution.submitterId),
+    contributionId,
+    bountyId: contribution.bountyId,
+    submitterId: contribution.submitterId,
+    createdAt: contribution.createdAt,
+    status: contribution.status,
+  };
+}
+async function ensureContributionIndexes(contributionId: string, contribution: Contribution): Promise<void> {
+  const indexed = { ...contribution, id: contributionId };
+  await ensureIndexRecords(userSubmissionsTable(contribution.submitterId), [indexed]);
+  await ensureIndexRecords(userReceivedTable(contribution.ownerId), [indexed]);
+  const guard = activeSubmissionRecord(contributionId, contribution);
+  if (guard) await ensureIndexRecords('active_submissions', [guard]);
+}
+async function loadWorkIndexMigration(userId: string): Promise<WorkIndexMigration> {
+  const id = 'work_index_v1_' + userPartitionKey(userId);
+  const [saved] = await db.get<WorkIndexMigration>('user_index_migrations', [id], {
+    consistent: true,
+  });
+  if (saved) return { ...saved, id };
+
+  await db.tx.add('user_index_migrations', [{
+    id,
+    userId,
+    bountiesDone: false,
+    contributionsDone: false,
+  }]);
+  const [created] = await db.get<WorkIndexMigration>('user_index_migrations', [id], {
+    consistent: true,
+  });
+  if (!created) throw new Error('Work-index migration state could not be initialized.');
+  return { ...created, id };
+}
+async function saveWorkIndexProgress(
+  migration: WorkIndexMigration,
+  section: 'bounties' | 'contributions',
+  patch: Partial<WorkIndexMigration>
+): Promise<WorkIndexMigration> {
+  const doneField = section === 'bounties' ? 'bountiesDone' : 'contributionsDone';
+  const cursorField = section === 'bounties' ? 'bountiesCursor' : 'contributionsCursor';
+  const expected: Record<string, unknown> = {
+    [doneField]: false,
+    [cursorField]: migration[cursorField],
+  };
+  const [updated] = await db.tx.update('user_index_migrations', [{
+    id: migration.id,
+    record: patch as Record<string, unknown>,
+    if: expected,
+  }], { patch: true });
+  if (updated) return { ...migration, ...patch };
+
+  const [current] = await db.get<WorkIndexMigration>(
+    'user_index_migrations',
+    [migration.id],
+    { consistent: true }
+  );
+  if (!current) throw new Error('Work-index migration state disappeared during progress update.');
+  return { ...current, id: migration.id };
+}
+async function advanceWorkIndexMigration(userId: string): Promise<WorkIndexMigration> {
+  let migration = await loadWorkIndexMigration(userId);
+
+  if (!migration.bountiesDone) {
+    const page = await db.list<Bounty>('bounties', {
+      limit: 50,
+      ...(migration.bountiesCursor !== undefined
+        ? { nextToken: migration.bountiesCursor }
+        : {}),
+    });
+    const owned = page.items.filter(item => item.createdBy === userId).map(item => ({ ...item }));
+    await ensureIndexRecords(userBountiesTable(userId), owned);
+    migration = await saveWorkIndexProgress(migration, 'bounties', {
+      bountiesCursor: page.nextToken,
+      bountiesDone: !page.nextToken,
+    });
+  }
+
+  if (!migration.contributionsDone) {
+    const page = await db.list<Contribution>('contributions', {
+      limit: 40,
+      ...(migration.contributionsCursor !== undefined
+        ? { nextToken: migration.contributionsCursor }
+        : {}),
+    });
+    const submitted = page.items
+      .filter(item => item.submitterId === userId)
+      .map(item => ({ ...item }));
+    const received = page.items
+      .filter(item => item.ownerId === userId)
+      .map(item => ({ ...item }));
+    await ensureIndexRecords(userSubmissionsTable(userId), submitted);
+    await ensureIndexRecords(userReceivedTable(userId), received);
+    await ensureIndexRecords(
+      'active_submissions',
+      submitted
+        .map(item => activeSubmissionRecord(item.id, item))
+        .filter((item): item is ActiveSubmission => item !== null)
+    );
+    migration = await saveWorkIndexProgress(migration, 'contributions', {
+      contributionsCursor: page.nextToken,
+      contributionsDone: !page.nextToken,
+    });
+  }
+
+  return migration;
+}
+
+
 const samples = [
   {
     id: 'sample_docs',
@@ -350,10 +538,18 @@ export const handler = router({
         tier,
         minAccepted: tier === 'paid' ? minAccepted : 0,
       };
-      const [id] = await db.add('bounties', [record]);
-      if (!id)
-        return error('The bounty could not be saved. Please retry.', 503);
-      return json({ bounty: { ...record, id } }, 201);
+      const id = newRecordId('b');
+      const persisted = { ...record, id };
+      try {
+        const bountyWrite = db.tx.add('bounties', [persisted]);
+        const bountyIndexWrite = db.tx.add(userBountiesTable(user.userId), [persisted]);
+        const [bountyIds, indexIds] = await db.transact([bountyWrite, bountyIndexWrite]);
+        if (!bountyIds[0] || !indexIds[0])
+          return error('The bounty could not be saved. Please retry.', 503);
+      } catch {
+        return error('The bounty could not be saved atomically. Refresh and retry.', 503);
+      }
+      return json({ bounty: persisted }, 201);
     },
   ],
 
@@ -402,19 +598,30 @@ export const handler = router({
         }
       }
 
-      const previous = await db.list<Contribution>('contributions', {
-        filter: { bountyId: ctx.params.id, submitterId: user.userId },
-        limit: 100,
+      const migration = await advanceWorkIndexMigration(user.userId);
+      const guardId = submissionGuardId(ctx.params.id, user.userId);
+      const [activeGuard] = await db.get<ActiveSubmission>('active_submissions', [guardId], {
+        consistent: true,
       });
-      if (
-        previous.items.some(
-          item => item.status === 'pending' || item.status === 'accepted' || item.status === 'needs_changes'
-        )
-      ) {
+      if (activeGuard) {
         return error(
           'You already have an active submission or requested revision for this bounty. Use the existing submission to respond to review feedback.',
           409
         );
+      }
+      if (!migration.contributionsDone) {
+        const previous = await db.list<Contribution>('contributions', {
+          filter: { bountyId: ctx.params.id, submitterId: user.userId },
+          limit: 100,
+        });
+        if (previous.items.some(item =>
+          item.status === 'pending' || item.status === 'accepted' || item.status === 'needs_changes'
+        )) {
+          return error(
+            'You already have an active submission or requested revision for this bounty. Use the existing submission to respond to review feedback.',
+            409
+          );
+        }
       }
 
       const acceptanceCriteria = bounty.acceptanceCriteria?.length
@@ -442,10 +649,42 @@ export const handler = router({
           submittedAt,
         }],
       };
-      const [id] = await db.add('contributions', [record]);
-      if (!id)
-        return error('Your submission could not be saved. Please retry.', 503);
-      return json({ contribution: { ...record, id } }, 201);
+      const id = newRecordId('c');
+      const persisted = { ...record, id };
+      const guard: ActiveSubmission = {
+        id: guardId,
+        contributionId: id,
+        bountyId: ctx.params.id,
+        submitterId: user.userId,
+        createdAt: submittedAt,
+        status: 'pending',
+      };
+      try {
+        const contributionWrite = db.tx.add('contributions', [persisted]);
+        const submitterIndexWrite = db.tx.add(userSubmissionsTable(user.userId), [persisted]);
+        const ownerIndexWrite = db.tx.add(userReceivedTable(bounty.createdBy), [persisted]);
+        const guardWrite = db.tx.add('active_submissions', [guard]);
+        const [contributionIds, submitterIds, ownerIds, guardIds] = await db.transact([
+          contributionWrite,
+          submitterIndexWrite,
+          ownerIndexWrite,
+          guardWrite,
+        ]);
+        if (!contributionIds[0] || !submitterIds[0] || !ownerIds[0] || !guardIds[0])
+          return error('Your submission could not be saved atomically. Please refresh and retry.', 503);
+      } catch {
+        const [confirmedGuard] = await db.get<ActiveSubmission>('active_submissions', [guardId], {
+          consistent: true,
+        });
+        if (confirmedGuard) {
+          return error(
+            'You already have an active submission or requested revision for this bounty. Use the existing submission to respond to review feedback.',
+            409
+          );
+        }
+        return error('Your submission could not be saved atomically. Please refresh and retry.', 503);
+      }
+      return json({ contribution: persisted }, 201);
     },
   ],
 
@@ -453,28 +692,35 @@ export const handler = router({
     requireAuth(),
     async ctx => {
       const user = ctx.user!;
-      const [bountyResult, contributionResult, profileResult] =
+      const migration = await advanceWorkIndexMigration(user.userId);
+      const [bountyResult, submissionResult, receivedResult, profileResult] =
         await Promise.all([
-          db.list<Bounty>('bounties', { limit: 100 }),
-          db.list<Contribution>('contributions', { limit: 100 }),
+          db.list<Bounty>(userBountiesTable(user.userId), { limit: 100 }),
+          db.list<Contribution>(userSubmissionsTable(user.userId), { limit: 100 }),
+          db.list<Contribution>(userReceivedTable(user.userId), { limit: 100 }),
           db.get<Profile>('profiles', [user.userId], { consistent: true }),
         ]);
-      const myBounties = bountyResult.items.filter(
-        item => item.createdBy === user.userId
-      );
-      const ownedIds = new Set(myBounties.map(item => item.id));
-      const mySubmissions = contributionResult.items.filter(
-        item => item.submitterId === user.userId
-      );
-      const receivedSubmissions = contributionResult.items.filter(item =>
-        ownedIds.has(item.bountyId)
-      );
       const profile = profileResult[0] || {
         displayName: contributorName(user),
         xp: 0,
         acceptedCount: 0,
       };
-      return json({ profile, mySubmissions, myBounties, receivedSubmissions });
+      return json({
+        profile,
+        mySubmissions: submissionResult.items,
+        myBounties: bountyResult.items,
+        receivedSubmissions: receivedResult.items,
+        indexing: !(migration.bountiesDone && migration.contributionsDone),
+        indexProgress: {
+          bountiesDone: migration.bountiesDone,
+          contributionsDone: migration.contributionsDone,
+        },
+        hasMore: {
+          myBounties: Boolean(bountyResult.nextToken),
+          mySubmissions: Boolean(submissionResult.nextToken),
+          receivedSubmissions: Boolean(receivedResult.nextToken),
+        },
+      });
     },
   ],
 
@@ -499,6 +745,7 @@ export const handler = router({
       if (!bounty || bounty.status !== 'open')
         return error('This bounty is no longer open for revisions.', 409);
 
+      await ensureContributionIndexes(ctx.params.id, contribution);
       const submittedAt = new Date().toISOString();
       const revisionNumber = (contribution.revisionNumber ?? 1) + 1;
       const revisionHistory = [
@@ -508,23 +755,38 @@ export const handler = router({
       const acceptanceCriteria = contribution.acceptanceCriteria?.length
         ? contribution.acceptanceCriteria
         : DEFAULT_ACCEPTANCE_CRITERIA;
-      const [updated] = await db.tx.update('contributions', [{
-        id: ctx.params.id,
-        record: {
-          status: 'pending',
-          workUrl: workUrl || undefined,
-          note,
-          revisionNumber,
-          revisionHistory,
-          lastSubmittedAt: submittedAt,
-          feedback: undefined,
-          criteriaChecks: acceptanceCriteria.map(() => false),
-          reviewedAt: undefined,
-        },
-        if: { status: 'needs_changes', submitterId: user.userId },
-      }], { patch: true });
-      if (!updated)
+      const revisionPatch = {
+        status: 'pending' as const,
+        workUrl: workUrl || undefined,
+        note,
+        revisionNumber,
+        revisionHistory,
+        lastSubmittedAt: submittedAt,
+        feedback: undefined,
+        criteriaChecks: acceptanceCriteria.map(() => false),
+        reviewedAt: undefined,
+      };
+      try {
+        await db.transact([
+          db.tx.update('contributions', [{
+            id: ctx.params.id,
+            record: revisionPatch,
+            if: { status: 'needs_changes', submitterId: user.userId },
+          }], { patch: true }),
+          db.tx.update(userSubmissionsTable(user.userId), [{
+            id: ctx.params.id,
+            record: revisionPatch,
+            if: { status: 'needs_changes', submitterId: user.userId },
+          }], { patch: true }),
+          db.tx.update(userReceivedTable(contribution.ownerId), [{
+            id: ctx.params.id,
+            record: revisionPatch,
+            if: { status: 'needs_changes', submitterId: user.userId },
+          }], { patch: true }),
+        ]);
+      } catch {
         return error('The submission changed while you were editing. Refresh and try again.', 409);
+      }
       return json({ resubmitted: true, status: 'pending', revisionNumber });
     },
   ],
@@ -574,6 +836,8 @@ export const handler = router({
       };
       const reviewHistory = [...(contribution.reviewHistory ?? []), reviewEvent].slice(-20);
 
+      await ensureContributionIndexes(ctx.params.id, contribution);
+
       if (status === 'accepted') {
         const [bounty] = await db.get<Bounty>(
           'bounties',
@@ -591,45 +855,49 @@ export const handler = router({
           },
         ]);
         try {
+          const acceptedPatch = {
+            status: 'accepted' as const,
+            feedback,
+            criteriaChecks: [...criteriaChecks],
+            reviewHistory,
+            reviewedAt,
+          };
           const contributionUpdate = db.tx.update(
             'contributions',
-            [
-              {
-                id: ctx.params.id,
-                record: {
-                  status: 'accepted',
-                  feedback,
-                  criteriaChecks: [...criteriaChecks],
-                  reviewHistory,
-                  reviewedAt,
-                },
-                if: { status: 'pending' },
-              },
-            ],
+            [{ id: ctx.params.id, record: acceptedPatch, if: { status: 'pending' } }],
+            { patch: true }
+          );
+          const submitterIndexUpdate = db.tx.update(
+            userSubmissionsTable(contribution.submitterId),
+            [{ id: ctx.params.id, record: acceptedPatch, if: { status: 'pending' } }],
+            { patch: true }
+          );
+          const ownerIndexUpdate = db.tx.update(
+            userReceivedTable(contribution.ownerId),
+            [{ id: ctx.params.id, record: acceptedPatch, if: { status: 'pending' } }],
             { patch: true }
           );
           const bountyUpdate = db.tx.update(
             'bounties',
-            [
-              {
-                id: contribution.bountyId,
-                record: { status: 'completed' },
-                if: { status: 'open' },
-              },
-            ],
+            [{ id: contribution.bountyId, record: { status: 'completed' }, if: { status: 'open' } }],
             { patch: true }
           );
           const profileUpdate = db.tx.update(
             'profiles',
-            [
-              {
-                id: contribution.submitterId,
-                record: { xp: increment(50), acceptedCount: increment(1) },
-              },
-            ],
+            [{ id: contribution.submitterId, record: { xp: increment(50), acceptedCount: increment(1) } }],
             { patch: true }
           );
-          await db.transact([contributionUpdate, bountyUpdate, profileUpdate]);
+          const guardDelete = db.tx.delete('active_submissions', [
+            submissionGuardId(contribution.bountyId, contribution.submitterId),
+          ]);
+          await db.transact([
+            contributionUpdate,
+            submitterIndexUpdate,
+            ownerIndexUpdate,
+            bountyUpdate,
+            profileUpdate,
+            guardDelete,
+          ]);
         } catch {
           return error(
             'The review could not be committed. The contribution or bounty may have changed; refresh and check its current status.',
@@ -644,19 +912,44 @@ export const handler = router({
         });
       }
 
-      const [updated] = await db.tx.update(
-        'contributions',
-        [
-          {
-            id: ctx.params.id,
-            record: { status, feedback, criteriaChecks: [...criteriaChecks], reviewHistory, reviewedAt },
-            if: { status: 'pending' },
-          },
-        ],
-        { patch: true }
-      );
-      if (!updated)
-        return error('This contribution has already been reviewed.', 409);
+      const reviewPatch = {
+        status,
+        feedback,
+        criteriaChecks: [...criteriaChecks],
+        reviewHistory,
+        reviewedAt,
+      };
+      try {
+        const contributionUpdate = db.tx.update('contributions', [{
+          id: ctx.params.id,
+          record: reviewPatch,
+          if: { status: 'pending' },
+        }], { patch: true });
+        const submitterIndexUpdate = db.tx.update(userSubmissionsTable(contribution.submitterId), [{
+          id: ctx.params.id,
+          record: reviewPatch,
+          if: { status: 'pending' },
+        }], { patch: true });
+        const ownerIndexUpdate = db.tx.update(userReceivedTable(contribution.ownerId), [{
+          id: ctx.params.id,
+          record: reviewPatch,
+          if: { status: 'pending' },
+        }], { patch: true });
+        if (status === 'rejected') {
+          await db.transact([
+            contributionUpdate,
+            submitterIndexUpdate,
+            ownerIndexUpdate,
+            db.tx.delete('active_submissions', [
+              submissionGuardId(contribution.bountyId, contribution.submitterId),
+            ]),
+          ]);
+        } else {
+          await db.transact([contributionUpdate, submitterIndexUpdate, ownerIndexUpdate]);
+        }
+      } catch {
+        return error('This contribution changed while the review was being committed. Refresh and check its current status.', 409);
+      }
       return json({ reviewed: true, status });
     },
   ],
