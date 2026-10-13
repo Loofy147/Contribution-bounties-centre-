@@ -601,6 +601,12 @@ export const handler = router({
       }
 
       const migration = await advanceWorkIndexMigration(user.userId);
+      if (!migration.contributionsDone) {
+        return error(
+          'Your existing contribution history is still being indexed. Open My contributions and continue indexing before submitting new work.',
+          409
+        );
+      }
       const guardId = submissionGuardId(ctx.params.id, user.userId);
       const [activeGuard] = await db.get<ActiveSubmission>('active_submissions', [guardId], {
         consistent: true,
@@ -610,20 +616,6 @@ export const handler = router({
           'You already have an active submission or requested revision for this bounty. Use the existing submission to respond to review feedback.',
           409
         );
-      }
-      if (!migration.contributionsDone) {
-        const previous = await db.list<Contribution>('contributions', {
-          filter: { bountyId: ctx.params.id, submitterId: user.userId },
-          limit: 100,
-        });
-        if (previous.items.some(item =>
-          item.status === 'pending' || item.status === 'accepted' || item.status === 'needs_changes'
-        )) {
-          return error(
-            'You already have an active submission or requested revision for this bounty. Use the existing submission to respond to review feedback.',
-            409
-          );
-        }
       }
 
       const acceptanceCriteria = bounty.acceptanceCriteria?.length
