@@ -316,7 +316,7 @@ function App() {
   useEffect(() => {
     if (user && view === 'Account & integrations') void refreshSecurity();
     if (!user) { setSecurityState(null); setWorkspaceMembers([]); }
-  }, [user?.userId, view]);
+  }, [user?.userId, view, selectedWorkspaceId]);
 
   const acceptedCount = work.profile?.acceptedCount ?? 0;
   const xp = work.profile?.xp ?? 0;
