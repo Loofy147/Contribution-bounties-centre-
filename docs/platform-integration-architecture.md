@@ -32,9 +32,9 @@ Webhooks, when enabled, require signature verification, repository/installation 
 
 ## Database/access contract
 
-The current app's /api/my-work endpoint lists global bounded bounty/contribution collections and filters results in the handler. This must not become the multi-project design: the AppDeploy database SDK applies list filters after reads, so growing collections can create cost/latency and risk if future handlers accidentally return records before applying an authorization filter.
+The app now uses per-user private table indexes for authored bounties, submitted contributions, and received reviews. New bounty/submission writes and review/resubmission transitions update canonical records and their indexes transactionally. A stable active-submission guard blocks concurrent duplicate submissions. Existing records are indexed through bounded pages; the /api/my-work route reads from the signed-in user's tables and returns migration progress rather than filtering the global collections for normal reads. During migration, a bounded legacy duplicate check remains enabled until the contribution scan is complete. The public bounty board and leaderboard remain separate bounded reads.
 
-Before hosting unrelated projects, introduce explicit project/workspace identity and memberships, server-side authorization checks on every read/write, scoped lookup/index tables or migrate behind a repository interface to a relational store. Treat project IDs supplied by the browser as untrusted. Add negative tests for cross-project reads and writes.
+These indexes are a first scale and data-isolation step, not a complete multi-project authorization model. Before hosting unrelated projects, introduce explicit workspace/project identity and memberships, server-side authorization checks on every read/write, and negative tests for cross-project reads and writes. Treat browser-supplied project IDs as untrusted; evaluate a relational store behind a repository interface when query requirements outgrow the current key-value database.
 
 Keep audit/review events append-only, add an XP ledger with unique idempotency keys, and use transaction receipts for side effects that can be retried. Do not rely solely on counters or rolling arrays as the permanent audit record.
 
