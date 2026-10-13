@@ -1,7 +1,7 @@
 # Platform Integration Architecture
 
 **Status:** Implementation boundary, v0.1  
-**Date:** 2026-10-12
+**Date:** 2026-10-13
 
 This application is the first prototype of the broader [Contribution Network](https://github.com/Loofy147/contribution-network). The target integration/data architecture is specified in [Engineering Primitives and Integration Architecture](https://github.com/Loofy147/contribution-network/blob/main/docs/11-engineering-primitives.md). This document records how that target maps to the present app.
 
