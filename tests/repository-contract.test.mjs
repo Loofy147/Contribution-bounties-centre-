@@ -23,7 +23,7 @@ const secretsWorkflow = await readFile(
 );
 
 test('QA manifest includes the core workflow scenarios', () => {
-  assert.equal(manifest.length, 9, 'expected nine documented browser scenarios');
+  assert.equal(manifest.length, 10, 'expected ten documented browser scenarios');
   assert.equal(
     manifest.filter((item) => item.sanity === true).length,
     1,
