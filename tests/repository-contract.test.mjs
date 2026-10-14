@@ -141,7 +141,7 @@ test('PostHog analytics uses explicit low-PII events and disables ambient data c
   assert.match(frontend, /resetAnalyticsIdentity\(\)/);
 });
 test('Gitleaks exception is limited to the public analytics key finding', () => {
-  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact/);
+  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact --config \.gitleaks\.toml/);
   assert.ok(gitleaksConfig.includes('targetRules = ["generic-api-key"]'));
   assert.ok(gitleaksConfig.includes('condition = "AND"'));
   assert.ok(gitleaksConfig.includes('commits = ["9781e3f639ba6008d18a08c14a11fb4c5b2ab44f"]'));
@@ -210,7 +210,7 @@ test('secret scanning installs a pinned CLI without account lookup or report upl
   assert.match(secretsWorkflow, /fetch-depth: 0/);
   assert.match(secretsWorkflow, /go-version: "1\.25\.4"/);
   assert.match(secretsWorkflow, /go install github\.com\/zricethezav\/gitleaks\/v8@v8\.30\.0/);
-  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact/);
+  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact --config \.gitleaks\.toml/);
   assert.ok(secretsWorkflow.includes("REPORT_PATH: ${{ runner.temp }}/gitleaks-report.json"));
   assert.ok(secretsWorkflow.includes("jq -c '[.[] | {RuleID, File, Commit, StartLine, Fingerprint}]'"));
   assert.match(secretsWorkflow, /rm -f "\$REPORT_PATH"/);
@@ -300,7 +300,7 @@ test('secret scanning installs a pinned CLI without account lookup or report upl
   assert.match(secretsWorkflow, /fetch-depth: 0/);
   assert.match(secretsWorkflow, /go-version: "1\.25\.4"/);
   assert.match(secretsWorkflow, /go install github\.com\/zricethezav\/gitleaks\/v8@v8\.30\.0/);
-  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact/);
+  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact --config \.gitleaks\.toml/);
   assert.ok(secretsWorkflow.includes("REPORT_PATH: ${{ runner.temp }}/gitleaks-report.json"));
   assert.ok(secretsWorkflow.includes("jq -c '[.[] | {RuleID, File, Commit, StartLine, Fingerprint}]'"));
   assert.match(secretsWorkflow, /rm -f "\$REPORT_PATH"/);
