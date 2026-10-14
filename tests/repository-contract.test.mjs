@@ -6,6 +6,8 @@ const manifest = JSON.parse(
   await readFile(new URL('./tests.json', import.meta.url), 'utf8'),
 );
 const backend = await readFile(new URL('../backend/index.ts', import.meta.url), 'utf8');
+const frontend = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const analytics = await readFile(new URL('../src/analytics.ts', import.meta.url), 'utf8');
 const packageManifest = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8'),
 );
@@ -21,6 +23,7 @@ const secretsWorkflow = await readFile(
   new URL('../.github/workflows/secrets-scan.yml', import.meta.url),
   'utf8',
 );
+const gitleaksConfig = await readFile(new URL('../.gitleaks.toml', import.meta.url), 'utf8');
 
 test('QA manifest includes the core workflow scenarios', () => {
   assert.equal(manifest.length, 11, 'expected eleven documented browser scenarios');
@@ -115,6 +118,44 @@ test('account roles and GitHub identity linking enforce server-side boundaries',
   assert.ok(backend.includes('Only a platform owner can remove a workspace administrator.'));
   assert.ok(backend.includes('repository installation is a separate pending step'));
   assert.doesNotMatch(backend, /record:\s*\{[^}]*accessToken/s);
+});
+
+test('PostHog analytics uses explicit low-PII events and disables ambient data capture', () => {
+  assert.ok(packageManifest.dependencies['posthog-js']);
+  for (const setting of [
+    'autocapture: false',
+    'capture_pageview: false',
+    'capture_pageleave: false',
+    'disable_session_recording: true',
+    'disable_surveys: true',
+    "person_profiles: 'identified_only'",
+    'ip: false',
+  ]) assert.ok(analytics.includes(setting), 'missing privacy setting: ' + setting);
+  assert.ok(analytics.includes('posthog.identify(userId)'));
+  assert.ok(analytics.includes('posthog.reset()'));
+  assert.ok(!/posthog\.identify\([^)]*(email|displayName|name)/i.test(analytics));
+  assert.ok(frontend.includes("acceptance_criteria_count: bountyForm.acceptanceCriteria.split('\\n')"));
+  for (const event of [
+    'product_area_viewed',
+    'bounty_created',
+    'contribution_submitted',
+    'contribution_resubmitted',
+    'contribution_reviewed',
+  ]) {
+    assert.ok(analytics.includes("'" + event + "'"), 'missing declared event: ' + event);
+    assert.ok(frontend.includes("captureProductEvent('" + event + "'"), 'missing capture call: ' + event);
+  }
+  assert.ok(frontend.includes('identifyAnalyticsUser(current.userId)'));
+  assert.ok(frontend.includes('resetAnalyticsIdentity()'));
+});
+
+test('Gitleaks exception is limited to the public analytics key finding', () => {
+  assert.ok(secretsWorkflow.includes('--config .gitleaks.toml'));
+  assert.ok(gitleaksConfig.includes('targetRules = ["generic-api-key"]'));
+  assert.ok(gitleaksConfig.includes('condition = "AND"'));
+  assert.ok(gitleaksConfig.includes('commits = ["9781e3f639ba6008d18a08c14a11fb4c5b2ab44f"]'));
+  assert.ok(gitleaksConfig.includes("src/analytics"));
+  assert.ok(gitleaksConfig.includes('public PostHog JS ingestion project key'));
 });
 
 test('package exposes a dependency-free contract test command', () => {
