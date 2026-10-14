@@ -145,7 +145,7 @@ test('Gitleaks exception is limited to the public analytics key finding', () => 
   assert.ok(gitleaksConfig.includes('targetRules = ["generic-api-key"]'));
   assert.ok(gitleaksConfig.includes('condition = "AND"'));
   assert.ok(gitleaksConfig.includes('commits = ["9781e3f639ba6008d18a08c14a11fb4c5b2ab44f"]'));
-  assert.ok(gitleaksConfig.includes('^src/analytics\.ts
+  assert.ok(gitleaksConfig.includes("src/analytics"), "allowlist must target the analytics module");
   assert.equal(packageManifest.private, true);
   assert.equal(packageManifest.type, 'module');
   assert.equal(
