@@ -131,6 +131,7 @@ test('PostHog analytics uses explicit low-PII events and disables ambient data c
   assert.match(analytics, /posthog\.identify\(userId\)/);
   assert.match(analytics, /posthog\.reset\(\)/);
   assert.doesNotMatch(analytics, /posthog\.identify\([^)]*(email|displayName|name)/i);
+  assert.match(frontend, /acceptance_criteria_count: bountyForm\.acceptanceCriteria\.split\('\n'\)/);
   for (const event of ['product_area_viewed', 'bounty_created', 'contribution_submitted', 'contribution_resubmitted', 'contribution_reviewed']) {
     assert.ok(analytics.includes("'" + event + "'"), 'missing declared event: ' + event);
     assert.ok(frontend.includes("captureProductEvent('" + event + "'"), 'missing capture call: ' + event);
