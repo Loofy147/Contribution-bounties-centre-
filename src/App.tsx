@@ -36,6 +36,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, auth } from '@appdeploy/client';
+import { captureProductEvent, identifyAnalyticsUser, resetAnalyticsIdentity } from './analytics';
 
 type Bounty = {
   id: string;
@@ -327,6 +328,7 @@ function App() {
       }
       setUser(current);
       if (current) {
+        identifyAnalyticsUser(current.userId);
         const workResponse = await api.get('/api/my-work');
         let currentWork = workResponse.data as WorkData;
         setWork(currentWork);
@@ -337,6 +339,7 @@ function App() {
           setWork(currentWork);
         }
       } else {
+        resetAnalyticsIdentity();
         setWork(EMPTY_WORK);
       }
     } catch (err) {
@@ -349,6 +352,12 @@ function App() {
   useEffect(() => {
     void refreshData();
   }, []);
+
+  useEffect(() => {
+    if (view !== 'Account & integrations') {
+      captureProductEvent('product_area_viewed', { area: view });
+    }
+  }, [view]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -490,6 +499,7 @@ function App() {
   const signOut = async () => {
     try {
       await auth.signOut();
+      resetAnalyticsIdentity();
       setUser(null);
       setWork(EMPTY_WORK);
       setView('Overview');
@@ -785,6 +795,12 @@ function App() {
         tier: bountyForm.tier,
         minAccepted: Number(bountyForm.minAccepted),
       });
+      captureProductEvent('bounty_created', {
+        category: bountyForm.category,
+        bounty_tier: bountyForm.tier,
+        acceptance_criteria_count: bountyForm.acceptanceCriteria.split('\\n').map(item => item.trim()).filter(Boolean).length,
+        has_repository_url: Boolean(bountyForm.repoUrl.trim()),
+      });
       setModal(null);
       await refreshData(false);
       setView('Explore bounties');
@@ -810,7 +826,12 @@ function App() {
     try {
       if (resubmitting && revisionTarget) {
         await api.post('/api/contributions/' + revisionTarget.id + '/resubmit', submissionForm);
-        setReviewDrafts(current => ({
+        captureProductEvent('contribution_resubmitted', {
+          bounty_tier: revisionTarget.bountyTier,
+          revision_number: (revisionTarget.revisionNumber ?? 1) + 1,
+          has_evidence_link: Boolean(submissionForm.workUrl.trim()),
+        });
+        setReviewDrafts(current => ({(
           ...current,
           [revisionTarget.id]: {
             criteriaChecks: acceptanceCriteriaFor(revisionTarget).map(() => false),
@@ -819,6 +840,11 @@ function App() {
         }));
       } else if (target) {
         await api.post('/api/bounties/' + target.id + '/submit', submissionForm);
+        captureProductEvent('contribution_submitted', {
+          bounty_tier: target.tier,
+          acceptance_criteria_count: acceptanceCriteriaFor(target).length,
+          has_evidence_link: Boolean(submissionForm.workUrl.trim()),
+        });
       }
       setModal(null);
       setRevisionTarget(null);
@@ -858,6 +884,17 @@ function App() {
         status,
         feedback,
         criteriaChecks: draft.criteriaChecks,
+      });
+      const submittedAt = new Date(item.lastSubmittedAt || item.createdAt).getTime();
+      const reviewLatencyHours = Number.isFinite(submittedAt)
+        ? Math.round(Math.max(0, Date.now() - submittedAt) / 360000) / 10
+        : undefined;
+      captureProductEvent('contribution_reviewed', {
+        outcome: status,
+        criteria_count: draft.criteriaChecks.length,
+        criteria_passed_count: draft.criteriaChecks.filter(Boolean).length,
+        xp_awarded: status === 'accepted' ? 50 : 0,
+        ...(reviewLatencyHours === undefined ? {} : { review_latency_hours: reviewLatencyHours }),
       });
       await refreshData(false);
       showToast(
