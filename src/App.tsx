@@ -831,7 +831,7 @@ function App() {
           revision_number: (revisionTarget.revisionNumber ?? 1) + 1,
           has_evidence_link: Boolean(submissionForm.workUrl.trim()),
         });
-        setReviewDrafts(current => ({(
+        setReviewDrafts(current => ({
           ...current,
           [revisionTarget.id]: {
             criteriaChecks: acceptanceCriteriaFor(revisionTarget).map(() => false),
