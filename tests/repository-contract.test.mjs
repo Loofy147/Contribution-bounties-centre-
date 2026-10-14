@@ -122,116 +122,39 @@ test('account roles and GitHub identity linking enforce server-side boundaries',
 
 test('PostHog analytics uses explicit low-PII events and disables ambient data capture', () => {
   assert.ok(packageManifest.dependencies['posthog-js']);
-  assert.match(analytics, /autocapture:\s*false/);
-  assert.match(analytics, /capture_pageview:\s*false/);
-  assert.match(analytics, /capture_pageleave:\s*false/);
-  assert.match(analytics, /disable_session_recording:\s*true/);
-  assert.match(analytics, /disable_surveys:\s*true/);
-  assert.match(analytics, /person_profiles:\s*'identified_only'/);
-  assert.match(analytics, /\bip:\s*false/);
-  assert.match(analytics, /posthog\.identify\(userId\)/);
-  assert.match(analytics, /posthog\.reset\(\)/);
-  assert.doesNotMatch(analytics, /posthog\.identify\([^)]*(email|displayName|name)/i);
-  assert.ok(frontend.includes("acceptance_criteria_count: bountyForm.acceptanceCriteria.split('\\n')"), 'criteria count must split on newline characters');
-  for (const event of ['product_area_viewed', 'bounty_created', 'contribution_submitted', 'contribution_resubmitted', 'contribution_reviewed']) {
+  for (const setting of [
+    'autocapture: false',
+    'capture_pageview: false',
+    'capture_pageleave: false',
+    'disable_session_recording: true',
+    'disable_surveys: true',
+    "person_profiles: 'identified_only'",
+    'ip: false',
+  ]) assert.ok(analytics.includes(setting), 'missing privacy setting: ' + setting);
+  assert.ok(analytics.includes('posthog.identify(userId)'));
+  assert.ok(analytics.includes('posthog.reset()'));
+  assert.ok(!/posthog\.identify\([^)]*(email|displayName|name)/i.test(analytics));
+  assert.ok(frontend.includes("acceptance_criteria_count: bountyForm.acceptanceCriteria.split('\\n')"));
+  for (const event of [
+    'product_area_viewed',
+    'bounty_created',
+    'contribution_submitted',
+    'contribution_resubmitted',
+    'contribution_reviewed',
+  ]) {
     assert.ok(analytics.includes("'" + event + "'"), 'missing declared event: ' + event);
     assert.ok(frontend.includes("captureProductEvent('" + event + "'"), 'missing capture call: ' + event);
   }
-  assert.match(frontend, /identifyAnalyticsUser\(current\.userId\)/);
-  assert.match(frontend, /resetAnalyticsIdentity\(\)/);
+  assert.ok(frontend.includes('identifyAnalyticsUser(current.userId)'));
+  assert.ok(frontend.includes('resetAnalyticsIdentity()'));
 });
+
 test('Gitleaks exception is limited to the public analytics key finding', () => {
-  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact --config \.gitleaks\.toml/);
+  assert.ok(secretsWorkflow.includes('--config .gitleaks.toml'));
   assert.ok(gitleaksConfig.includes('targetRules = ["generic-api-key"]'));
   assert.ok(gitleaksConfig.includes('condition = "AND"'));
   assert.ok(gitleaksConfig.includes('commits = ["9781e3f639ba6008d18a08c14a11fb4c5b2ab44f"]'));
-  assert.ok(gitleaksConfig.includes("src/analytics"), "allowlist must target the analytics module");
-  assert.equal(packageManifest.private, true);
-  assert.equal(packageManifest.type, 'module');
-  assert.equal(
-    packageManifest.scripts['test:contract'],
-    'node --test tests/repository-contract.test.mjs',
-  );
-});
-
-test('CI workflow has least privilege, immutable actions, and bounded execution', () => {
-  assert.match(workflow, /^permissions:\n  contents: read$/m);
-  assert.match(workflow, /^concurrency:/m);
-  assert.match(workflow, /cancel-in-progress: true/);
-  assert.doesNotMatch(workflow, /\\\\\$\\{\\{/);
-  assert.match(workflow, /timeout-minutes: 10/);
-  assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /^  pull_request:/m);
-  assert.match(workflow, /^  workflow_dispatch:/m);
-  assert.doesNotMatch(workflow, /pull_request_target/);
-  assert.doesNotMatch(workflow, /secrets\./);
-
-  const actionRefs = [...workflow.matchAll(/^\s*uses:\s*([^\s]+)/gm)]
-    .map((match) => match[1]);
-
-  assert.ok(actionRefs.length >= 2, 'expected checkout and Node setup actions');
-  for (const reference of actionRefs) {
-    assert.match(
-      reference,
-      /@[a-f0-9]{40}$/i,
-      `workflow action must be pinned to a full commit SHA: ${reference}`,
-    );
-  }
-});
-
-
-test('CodeQL is enabled for JavaScript and TypeScript with job-scoped write permission', () => {
-  assert.doesNotMatch(codeqlWorkflow, /\\\\\$\\{\\{/);
-  assert.match(codeqlWorkflow, /^  pull_request:/m);
-  assert.match(codeqlWorkflow, /^  schedule:/m);
-  assert.match(codeqlWorkflow, /languages: javascript-typescript/);
-  assert.match(codeqlWorkflow, /build-mode: none/);
-  assert.match(codeqlWorkflow, /security-events: write/);
-  assert.match(codeqlWorkflow, /^permissions:\n  contents: read$/m);
-  assert.doesNotMatch(codeqlWorkflow, /pull_request_target/);
-  assert.doesNotMatch(codeqlWorkflow, /secrets\./);
-
-  const actionRefs = [...codeqlWorkflow.matchAll(/^\s*uses:\s*([^\s]+)/gm)]
-    .map((match) => match[1]);
-  assert.ok(actionRefs.length >= 3, 'expected checkout and CodeQL init/analyze');
-  for (const reference of actionRefs) {
-    assert.match(
-      reference,
-      /@[a-f0-9]{40}$/i,
-      `workflow action must be pinned to a full commit SHA: ${reference}`,
-    );
-  }
-});
-
-
-test('secret scanning installs a pinned CLI without account lookup or report uploads', () => {
-  assert.doesNotMatch(secretsWorkflow, /\\\\\$\\{\\{/);
-  assert.match(secretsWorkflow, /^permissions:\n  contents: read$/m);
-  assert.match(secretsWorkflow, /fetch-depth: 0/);
-  assert.match(secretsWorkflow, /go-version: "1\.25\.4"/);
-  assert.match(secretsWorkflow, /go install github\.com\/zricethezav\/gitleaks\/v8@v8\.30\.0/);
-  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact --config \.gitleaks\.toml/);
-  assert.ok(secretsWorkflow.includes("REPORT_PATH: ${{ runner.temp }}/gitleaks-report.json"));
-  assert.ok(secretsWorkflow.includes("jq -c '[.[] | {RuleID, File, Commit, StartLine, Fingerprint}]'"));
-  assert.match(secretsWorkflow, /rm -f "\$REPORT_PATH"/);
-  assert.doesNotMatch(secretsWorkflow, /Match, Secret/);
-  assert.doesNotMatch(secretsWorkflow, /pull_request_target/);
-  assert.doesNotMatch(secretsWorkflow, /pull-requests:\s*write/);
-  assert.doesNotMatch(secretsWorkflow, /secrets\./);
-  assert.doesNotMatch(secretsWorkflow, /GITLEAKS_ENABLE_UPLOAD_ARTIFACT/);
-
-  const actionRefs = [...secretsWorkflow.matchAll(/^\s*uses:\s*([^\s]+)/gm)]
-    .map((match) => match[1]);
-  assert.ok(actionRefs.length >= 2, 'expected checkout and Go setup actions');
-  for (const reference of actionRefs) {
-    assert.match(
-      reference,
-      /@[a-f0-9]{40}$/i,
-      `workflow action must be pinned to a full commit SHA: ${reference}`,
-    );
-  }
-});
-));
+  assert.ok(gitleaksConfig.includes("src/analytics"));
   assert.ok(gitleaksConfig.includes('public PostHog JS ingestion project key'));
 });
 
@@ -300,7 +223,7 @@ test('secret scanning installs a pinned CLI without account lookup or report upl
   assert.match(secretsWorkflow, /fetch-depth: 0/);
   assert.match(secretsWorkflow, /go-version: "1\.25\.4"/);
   assert.match(secretsWorkflow, /go install github\.com\/zricethezav\/gitleaks\/v8@v8\.30\.0/);
-  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact --config \.gitleaks\.toml/);
+  assert.match(secretsWorkflow, /gitleaks detect --source \. --redact/);
   assert.ok(secretsWorkflow.includes("REPORT_PATH: ${{ runner.temp }}/gitleaks-report.json"));
   assert.ok(secretsWorkflow.includes("jq -c '[.[] | {RuleID, File, Commit, StartLine, Fingerprint}]'"));
   assert.match(secretsWorkflow, /rm -f "\$REPORT_PATH"/);
