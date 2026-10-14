@@ -798,7 +798,7 @@ function App() {
       captureProductEvent('bounty_created', {
         category: bountyForm.category,
         bounty_tier: bountyForm.tier,
-        acceptance_criteria_count: bountyForm.acceptanceCriteria.split('\\n').map(item => item.trim()).filter(Boolean).length,
+        acceptance_criteria_count: bountyForm.acceptanceCriteria.split('\n').map(item => item.trim()).filter(Boolean).length,
         has_repository_url: Boolean(bountyForm.repoUrl.trim()),
       });
       setModal(null);
