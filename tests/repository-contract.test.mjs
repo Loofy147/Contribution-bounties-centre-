@@ -6,6 +6,8 @@ const manifest = JSON.parse(
   await readFile(new URL('./tests.json', import.meta.url), 'utf8'),
 );
 const backend = await readFile(new URL('../backend/index.ts', import.meta.url), 'utf8');
+const frontend = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const analytics = await readFile(new URL('../src/analytics.ts', import.meta.url), 'utf8');
 const packageManifest = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8'),
 );
@@ -117,6 +119,25 @@ test('account roles and GitHub identity linking enforce server-side boundaries',
   assert.doesNotMatch(backend, /record:\s*\{[^}]*accessToken/s);
 });
 
+test('PostHog analytics uses explicit low-PII events and disables ambient data capture', () => {
+  assert.ok(packageManifest.dependencies['posthog-js']);
+  assert.match(analytics, /autocapture:\s*false/);
+  assert.match(analytics, /capture_pageview:\s*false/);
+  assert.match(analytics, /capture_pageleave:\s*false/);
+  assert.match(analytics, /disable_session_recording:\s*true/);
+  assert.match(analytics, /disable_surveys:\s*true/);
+  assert.match(analytics, /person_profiles:\s*'identified_only'/);
+  assert.match(analytics, /\bip:\s*false/);
+  assert.match(analytics, /posthog\.identify\(userId\)/);
+  assert.match(analytics, /posthog\.reset\(\)/);
+  assert.doesNotMatch(analytics, /posthog\.identify\([^)]*(email|displayName|name)/i);
+  for (const event of ['product_area_viewed', 'bounty_created', 'contribution_submitted', 'contribution_resubmitted', 'contribution_reviewed']) {
+    assert.ok(analytics.includes("'" + event + "'"), 'missing declared event: ' + event);
+    assert.ok(frontend.includes("captureProductEvent('" + event + "'"), 'missing capture call: ' + event);
+  }
+  assert.match(frontend, /identifyAnalyticsUser\(current\.userId\)/);
+  assert.match(frontend, /resetAnalyticsIdentity\(\)/);
+});
 test('package exposes a dependency-free contract test command', () => {
   assert.equal(packageManifest.private, true);
   assert.equal(packageManifest.type, 'module');
