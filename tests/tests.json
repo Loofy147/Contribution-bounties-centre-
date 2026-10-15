@@ -26,18 +26,20 @@
       "acceptance criteria snapshot",
       "low-risk self-verification",
       "exactly-once project XP",
-      "project contribution and profile refresh"
+      "project contribution and profile refresh",
+      "founder contribution draft attribution"
     ],
     "description": "Verifies the first consumer can record a real network task linked to inspectable work and get one XP award only after all criteria pass.",
     "steps": [
       "Sign in and open My contributions",
-      "Select Record work",
-      "Enter the Contribution Network project, title, work type, outcome description, a GitHub issue or pull request URL, evidence note, one clear criterion, and low risk",
-      "Save the contribution and refresh the page",
+      "Open the empty-state contribution form and choose Use founder contribution draft",
+      "Inspect the prefilled title, product-lead attribution, work link, evidence note, acceptance criteria, and standard-risk classification without submitting that template",
+      "Close the form and create a separate low-risk, bounded test contribution with its own accurate work/evidence notes and one clear criterion",
+      "Save the test contribution and refresh the page",
       "Mark the criterion as met and submit a verification rationale",
       "Refresh the project contribution card and profile progress"
     ],
-    "expected": "The record persists with its work/evidence links and one criteria snapshot. Only after successful low-risk verification does it show Self-verified and 50 XP; retrying verification does not award another 50 XP or increment the community accepted-work gate."
+    "expected": "The founder draft is prefilled with links and accurate attribution distinguishing founder direction from AI-assisted implementation, and is not submitted automatically. The separate bounded low-risk test record persists; only after successful self-verification does it show Self-verified and 50 XP. Retrying verification does not award another 50 XP or increment the community accepted-work gate."
   },
   {
     "name": "Keep higher-risk work provisional until stronger review",
