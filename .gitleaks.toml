@@ -7,5 +7,5 @@ useDefault = true
 description = "The public PostHog JS ingestion project key is intentionally client-side; suppress only the specific historical false-positive finding."
 condition = "AND"
 targetRules = ["generic-api-key"]
-commits = ["9781e3f639ba6008d18a08c14a11fb4c5b2ab44f"]
+commits = ["9781e3f639ba6008d18a08c14a11fb4c5b2ab44f", "48abb5f14d37f4574d1bff2a9c6e4c7fb5ca6f37"]
 paths = ['''^src/analytics\.ts$''']
