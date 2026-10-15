@@ -427,13 +427,17 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
         <div className="pc-list">
           {items.map(item => {
             const draft = getDraft(item);
-            const canSelfVerify = !needsIndependentReview(item);
+            const canSelfVerify = !item.workspaceId && !needsIndependentReview(item);
+            const statusLabel = item.status === 'accepted'
+              ? item.verificationLevel === 'independently_verified' ? 'Independently reviewed' : 'Self-verified'
+              : item.status === 'needs_changes' ? 'Changes requested'
+                : item.status === 'rejected' ? 'Rejected' : 'Provisional';
             return (
               <article className="pc-card" key={item.id}>
                 <div className="pc-card__top">
                   <div className="pc-card__type">{WORK_TYPES.find(type => type.value === item.workType)?.label ?? 'Contribution'}</div>
                   <span className={item.status === 'accepted' ? 'pc-status pc-status--verified' : 'pc-status pc-status--provisional'}>
-                    {item.status === 'accepted' ? 'Self-verified' : 'Provisional'}
+                    {statusLabel}
                   </span>
                 </div>
                 <h4>{item.workTitle}</h4>
