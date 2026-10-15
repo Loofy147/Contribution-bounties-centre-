@@ -463,6 +463,48 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
                       {item.verificationLevel === 'independently_verified' ? ' Reviewer identity and decision are retained in the audit history.' : ' Self-verification is not an independent credential.'}
                     </p>
                   </div>
+                ) : item.status === 'needs_changes' ? (
+                  <>
+                    <div className="pc-review-required pc-review-required--changes">
+                      <AlertTriangle size={17} />
+                      <div>
+                        <strong>Changes requested by {item.reviewerName || 'a workspace reviewer'}</strong>
+                        <p>{item.reviewFeedback || 'Review feedback was recorded. Inspect the review history for details.'}</p>
+                      </div>
+                    </div>
+                    <form className="pc-resubmit-form" onSubmit={event => void resubmitContribution(event, item)}>
+                      <h5>Revise and resubmit</h5>
+                      <label>
+                        Updated delivery description
+                        <textarea required minLength={30} maxLength={4000} rows={3} value={getResubmitDraft(item).description} onChange={event => updateResubmitDraft(item, { description: event.target.value })} />
+                      </label>
+                      <div className="pc-resubmit-form__grid">
+                        <label>
+                          Updated work URL
+                          <input type="url" maxLength={2048} value={getResubmitDraft(item).workUrl} onChange={event => updateResubmitDraft(item, { workUrl: event.target.value })} />
+                        </label>
+                        <label>
+                          Updated evidence URL
+                          <input type="url" maxLength={2048} value={getResubmitDraft(item).evidenceUrl} onChange={event => updateResubmitDraft(item, { evidenceUrl: event.target.value })} />
+                        </label>
+                      </div>
+                      <label>
+                        Updated evidence note
+                        <textarea required minLength={15} maxLength={1000} rows={2} value={getResubmitDraft(item).evidenceNote} onChange={event => updateResubmitDraft(item, { evidenceNote: event.target.value })} />
+                      </label>
+                      <button className="pc-button pc-button--primary" type="submit" disabled={saving || getResubmitDraft(item).description.trim().length < 30 || getResubmitDraft(item).evidenceNote.trim().length < 15}>
+                        {saving ? 'Submitting…' : 'Resubmit for review'}
+                      </button>
+                    </form>
+                  </>
+                ) : item.status === 'rejected' ? (
+                  <div className="pc-review-required pc-review-required--rejected">
+                    <AlertTriangle size={17} />
+                    <div>
+                      <strong>Contribution rejected · no XP awarded</strong>
+                      <p>{item.reviewFeedback || 'The reviewer rejected this submission.'}</p>
+                    </div>
+                  </div>
                 ) : canSelfVerify ? (
                   <div className="pc-verify">
                     <div className="pc-verify__heading"><CheckCircle2 size={17} /><div><strong>Verify a completed low-risk outcome</strong><span>Every criterion must pass; the evidence note must justify the result.</span></div></div>
