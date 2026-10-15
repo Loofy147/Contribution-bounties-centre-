@@ -52,6 +52,6 @@ The AppDeploy test manifest at tests/tests.json describes five browser scenarios
 4. Implement and test the charter's founder-contribution path with explicit verification levels; until then, track internal work through GitHub issues/PRs and evidence rather than implying the app has awarded XP.
 5. Address evidence uploads, notifications, payout controls, abuse resistance, and operational monitoring before making production-readiness claims.
 
-## License
+## License status
 
-No license has been selected. Public visibility does not by itself grant permission to reuse, modify, or redistribute this code. Do not treat this repository as open-source licensed until the project owner chooses and adds a license.
+The `main` branch remains unlicensed today. This review branch proposes the [GNU Affero General Public License v3.0 or later](LICENSE); the proposal is not effective on `main` unless an authorized maintainer approves and merges it. Before merge, confirm first-party ownership and file provenance. The proposed license does not license AppDeploy's platform, `@appdeploy/sdk`, `@appdeploy/client`, or any third-party dependency or asset. See [license scope and required pre-merge checks](docs/LICENSE_SCOPE.md).
