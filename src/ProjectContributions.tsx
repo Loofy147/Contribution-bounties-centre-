@@ -532,15 +532,30 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
                 ) : (
                   <div className="pc-review-required">
                     <AlertTriangle size={17} />
-                    <div><strong>Independent review required</strong><p>This record remains provisional. Self-verification cannot award XP for standard/high-risk or sensitive work. Attach review evidence and use a qualified reviewer before recognizing it.</p></div>
+                    <div><strong>Independent review required</strong><p>This record remains provisional. Self-verification cannot award XP for standard/high-risk or sensitive work. Select a shared workspace when recording the work to route it to an authorized reviewer.</p></div>
                   </div>
+                )}
+                {item.reviewHistory && item.reviewHistory.length > 0 && (
+                  <details className="pc-review-history">
+                    <summary>Review history ({item.reviewHistory.length})</summary>
+                    <div className="pc-review-history__events">
+                      {item.reviewHistory.map((event, index) => (
+                        <div key={event.reviewedAt + '-' + index}>
+                          <strong>{event.decision.replace('_', ' ')} · {event.reviewerName}</strong>
+                          <span>Revision {event.revisionNumber} · {formatDate(event.reviewedAt)}</span>
+                          <p>{event.feedback}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 )}
               </article>
             );
           })}
         </div>
       )}
-      <p className="pc-footnote"><Sparkles size={14} /> Work records stay linked to evidence. Provisional work earns no XP; self-verification is explicitly not independent validation.</p>
+      <ProjectReviewQueue onUpdated={onUpdated} />
+      <p className="pc-footnote"><Sparkles size={14} /> Work records stay linked to evidence. Shared records require an authorized reviewer; private self-verification is explicitly not independent validation.</p>
     </section>
   );
 }
