@@ -189,6 +189,24 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
     setForm(current => ({ ...current, ...patch }));
   };
 
+  const openFounderContributionDraft = () => {
+    setForm({
+      ...EMPTY_FORM,
+      projectName: 'Contribution Network',
+      workTitle: 'Direct and validate the first-consumer contribution workflow',
+      workType: 'coordination',
+      description: 'Defined the Contribution Network first-consumer objective and scope, directed requirements and architecture reviews, challenged unresolved gaps, selected acceptance boundaries, reviewed release evidence, and authorized delivery of the initial contribution ledger. Implementation was AI-assisted under my direction; this record attributes product direction, review, and release management rather than claiming manual authorship of generated code.',
+      workUrl: 'https://github.com/Loofy147/Contribution-bounties-centre-/pull/19',
+      evidenceUrl: 'https://github.com/Loofy147/Contribution-bounties-centre-/blob/main/docs/founder-contribution-record.md',
+      evidenceNote: 'Inspect the merged ledger PR, the founder contribution evidence document, and the live ContribQuest prototype. This is a founder-attributed record of product direction and release work; it remains provisional until an authorized reviewer distinct from the contributor accepts it.',
+      acceptanceCriteria: 'The first-consumer contribution ledger and evidence-linked record workflow are present in the released application.\nProduct scope, review boundaries, and release decisions are traceable to repository changes.\nAttribution distinguishes founder direction and review from AI-assisted implementation.',
+      riskLevel: 'standard',
+    });
+    setFormOpen(true);
+    setErrorMessage('');
+    setNotice('');
+  };
+
   const getDraft = (item: ProjectContribution): VerifyDraft =>
     drafts[item.id] ?? {
       criteriaChecks: item.acceptanceCriteria.map(() => false),
@@ -421,7 +439,10 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
           <div className="pc-empty__icon"><FileCheck2 size={20} /></div>
           <h4>No project contributions recorded yet</h4>
           <p>Start with the work already happening in the Contribution Network: decisions, research, implementation, tests, or documentation.</p>
-          <button type="button" className="pc-button pc-button--secondary" onClick={() => setFormOpen(true)}><Plus size={15} /> Record the first item</button>
+          <div className="pc-empty__actions">
+            <button type="button" className="pc-button pc-button--secondary" onClick={() => setFormOpen(true)}><Plus size={15} /> Record a contribution</button>
+            <button type="button" className="pc-button pc-button--primary" onClick={openFounderContributionDraft}>Use founder contribution draft</button>
+          </div>
         </div>
       ) : (
         <div className="pc-list">
