@@ -153,7 +153,7 @@ test('Gitleaks exception is limited to the public analytics key finding', () => 
   assert.ok(secretsWorkflow.includes('--config .gitleaks.toml'));
   assert.ok(gitleaksConfig.includes('targetRules = ["generic-api-key"]'));
   assert.ok(gitleaksConfig.includes('condition = "AND"'));
-  assert.ok(gitleaksConfig.includes('commits = ["9781e3f639ba6008d18a08c14a11fb4c5b2ab44f"]'));
+  assert.ok(gitleaksConfig.includes('commits = ["9781e3f639ba6008d18a08c14a11fb4c5b2ab44f", "48abb5f14d37f4574d1bff2a9c6e4c7fb5ca6f37"]'));
   assert.ok(gitleaksConfig.includes("src/analytics"));
   assert.ok(gitleaksConfig.includes('public PostHog JS ingestion project key'));
 });
