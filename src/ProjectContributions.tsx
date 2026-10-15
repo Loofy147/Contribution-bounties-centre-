@@ -451,9 +451,17 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
                 <div className="pc-evidence-note"><strong>Evidence note</strong><p>{item.evidenceNote}</p></div>
                 {item.status === 'accepted' ? (
                   <div className="pc-verified-record">
-                    <div><ShieldCheck size={17} /><strong>50 XP recorded</strong><span>Rule project-self-v1</span></div>
-                    <p>{item.verificationNote}</p>
-                    <p className="pc-verified-meta">Self-verified by {item.reviewerName || 'the contributor'} · {formatDate(item.acceptedAt || item.createdAt)}. This is not an independent credential.</p>
+                    <div>
+                      <ShieldCheck size={17} />
+                      <strong>50 XP recorded</strong>
+                      <span>Rule {item.verificationLevel === 'independently_verified' ? 'project-independent-v1' : 'project-self-v1'}</span>
+                    </div>
+                    <p>{item.verificationLevel === 'independently_verified' ? item.reviewFeedback : item.verificationNote}</p>
+                    <p className="pc-verified-meta">
+                      {item.verificationLevel === 'independently_verified' ? 'Independently reviewed by ' : 'Self-verified by '}
+                      {item.reviewerName || 'the contributor'} · {formatDate(item.acceptedAt || item.createdAt)}.
+                      {item.verificationLevel === 'independently_verified' ? ' Reviewer identity and decision are retained in the audit history.' : ' Self-verification is not an independent credential.'}
+                    </p>
                   </div>
                 ) : canSelfVerify ? (
                   <div className="pc-verify">
