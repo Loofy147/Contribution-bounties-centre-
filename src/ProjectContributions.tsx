@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { api } from '@appdeploy/client';
+import ProjectReviewQueue from './ProjectReviewQueue';
 import './ProjectContributions.css';
 
 type WorkType =
@@ -41,17 +42,41 @@ type ProjectContribution = {
   acceptanceCriteria: string[];
   criteriaChecks: boolean[];
   riskLevel: 'low' | 'standard' | 'high';
-  status: 'submitted' | 'accepted';
-  verificationLevel: 'provisional' | 'self_verified';
+  workspaceId?: string;
+  workspaceName?: string;
+  status: 'submitted' | 'needs_changes' | 'accepted' | 'rejected';
+  verificationLevel: 'provisional' | 'self_verified' | 'independently_verified';
   verificationNote?: string;
+  reviewFeedback?: string;
+  reviewHistory?: {
+    decision: 'accepted' | 'needs_changes' | 'rejected';
+    feedback: string;
+    reviewerName: string;
+    reviewedAt: string;
+    revisionNumber: number;
+  }[];
   reviewerName?: string;
+  revisionNumber?: number;
   xpAwarded: number;
   createdAt: string;
+  updatedAt: string;
   acceptedAt?: string;
+};
+type WorkspaceMembershipOption = {
+  workspaceId: string;
+  workspaceName: string;
+  role: 'workspace_admin' | 'reviewer' | 'contributor' | 'observer';
+};
+type ResubmitDraft = {
+  description: string;
+  workUrl: string;
+  evidenceUrl: string;
+  evidenceNote: string;
 };
 
 type CreateForm = {
   projectName: string;
+  workspaceId: string;
   workTitle: string;
   workType: WorkType;
   description: string;
@@ -85,6 +110,7 @@ const WORK_TYPES: { value: WorkType; label: string }[] = [
 
 const EMPTY_FORM: CreateForm = {
   projectName: 'Contribution Network',
+  workspaceId: '',
   workTitle: '',
   workType: 'architecture',
   description: '',
@@ -120,6 +146,8 @@ function formatDate(value: string): string {
 
 export default function ProjectContributions({ onUpdated }: { onUpdated?: () => void }) {
   const [items, setItems] = useState<ProjectContribution[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceMembershipOption[]>([]);
+  const [resubmitDrafts, setResubmitDrafts] = useState<Record<string, ResubmitDraft>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -142,6 +170,19 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
 
   useEffect(() => {
     void loadContributions();
+  }, []);
+
+  useEffect(() => {
+    const loadWorkspaces = async () => {
+      try {
+        const response = await api.get('/api/workspaces');
+        const available = (response.data?.workspaces ?? []) as WorkspaceMembershipOption[];
+        setWorkspaces(available.filter(item => item.role !== 'observer'));
+      } catch {
+        setWorkspaces([]);
+      }
+    };
+    void loadWorkspaces();
   }, []);
 
   const updateForm = (patch: Partial<CreateForm>) => {
@@ -172,6 +213,7 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
     try {
       const payload = {
         ...form,
+        workspaceId: form.workspaceId || undefined,
         acceptanceCriteria: form.acceptanceCriteria
           .split('\n')
           .map(item => item.trim())
@@ -184,6 +226,48 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
       await loadContributions();
       onUpdated?.();
       setNotice(saved ? 'Contribution recorded and linked to your work evidence.' : 'Contribution recorded.');
+    } catch (error) {
+      setErrorMessage(messageFromError(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const getResubmitDraft = (item: ProjectContribution): ResubmitDraft =>
+    resubmitDrafts[item.id] ?? {
+      description: item.description,
+      workUrl: item.workUrl ?? '',
+      evidenceUrl: item.evidenceUrl ?? '',
+      evidenceNote: item.evidenceNote,
+    };
+
+  const updateResubmitDraft = (item: ProjectContribution, patch: Partial<ResubmitDraft>) => {
+    setResubmitDrafts(current => ({
+      ...current,
+      [item.id]: { ...getResubmitDraft(item), ...patch },
+    }));
+  };
+
+  const resubmitContribution = async (event: FormEvent<HTMLFormElement>, item: ProjectContribution) => {
+    event.preventDefault();
+    const draft = getResubmitDraft(item);
+    if (draft.description.trim().length < 30 || draft.evidenceNote.trim().length < 15) {
+      setErrorMessage('Update the delivery description and evidence note before resubmitting.');
+      return;
+    }
+    setSaving(true);
+    setErrorMessage('');
+    setNotice('');
+    try {
+      await api.post('/api/project-contributions/' + encodeURIComponent(item.id) + '/resubmit', {
+        description: draft.description,
+        workUrl: draft.workUrl,
+        evidenceUrl: draft.evidenceUrl,
+        evidenceNote: draft.evidenceNote,
+      });
+      await loadContributions();
+      onUpdated?.();
+      setNotice('Revision resubmitted to the workspace review queue. Previous review history is preserved.');
     } catch (error) {
       setErrorMessage(messageFromError(error));
     } finally {
@@ -221,7 +305,7 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
 
   const totalXp = items.reduce((total, item) => total + (item.xpAwarded || 0), 0);
   const verifiedCount = items.filter(item => item.status === 'accepted').length;
-  const pendingCount = items.filter(item => item.status === 'submitted').length;
+  const pendingCount = items.filter(item => item.status === 'submitted' || item.status === 'needs_changes').length;
 
   return (
     <section className="project-contributions" aria-labelledby="project-contributions-title">
@@ -272,6 +356,17 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
             <label>
               Project
               <input required minLength={3} maxLength={120} value={form.projectName} onChange={event => updateForm({ projectName: event.target.value })} />
+            </label>
+            <label className="pc-form__wide">
+              Shared review workspace <span className="pc-field-hint">Optional. Work linked to a workspace enters its authorized independent review queue and cannot be self-verified.</span>
+              <select value={form.workspaceId} onChange={event => updateForm({ workspaceId: event.target.value })}>
+                <option value="">Private record — no shared reviewer</option>
+                {workspaces.map(workspace => (
+                  <option key={workspace.workspaceId} value={workspace.workspaceId}>
+                    {workspace.workspaceName} · {workspace.role.replace('_', ' ')}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
               Work type
