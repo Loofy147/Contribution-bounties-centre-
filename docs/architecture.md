@@ -2,7 +2,7 @@
 
 ## Snapshot identity
 
-The source in this repository was read from AppDeploy application contribquest-lygj1x, applied source version 1791833721555. The current public URL is https://contribquest-lygj1x.v2.appdeploy.ai/.
+The source in this repository was read from AppDeploy application contribquest-lygj1x, applied source version 1792091173658. The current public URL is https://contribquest-lygj1x.v2.appdeploy.ai/.
 
 This is a source snapshot, not a claim that the repository independently reproduces the deployed runtime byte-for-byte.
 
@@ -54,3 +54,12 @@ Server validation is consequential: UI controls alone are not the security bound
 - A submitted evidence URL is not the same as stored, scanned, or independently verified evidence.
 - XP is a product signal, not a professional credential.
 - Repository contract tests are static and do not execute API handlers or exercise separate user accounts.
+
+  
+## Project 0 contribution ledger
+
+The current app includes a separate private project-contribution ledger alongside the community bounty submission system. Records are stored in a per-user table derived from the authenticated AppDeploy user ID, and the API only reads or updates the signed-in user's ledger. Each record can link to a GitHub issue, pull request, commit, document, test output, or other work item, plus separate evidence and an evidence note. It preserves a 1–10 item acceptance-criteria snapshot and the recorded risk level.
+
+New records start as provisional with no XP. The current self-verification path is restricted server-side to explicitly low-risk, non-sensitive work, requires every criterion to pass and a rationale, writes a unique xp_awards ledger key, and increments profile XP in the same transaction. It does not increment the community accepted-work counter. Repeated verification cannot create a second XP award for the same project contribution.
+
+Standard/high-risk work and records that mention security-sensitive or consequential operations remain provisional. A full independent-review workflow and automated-check attestation path are not yet implemented, so the UI must not imply that these records have been independently reviewed or automatically validated. GitHub links are references to work/evidence; this feature does not yet synchronize issue or pull-request status automatically.
