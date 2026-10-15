@@ -65,4 +65,12 @@ This log records decisions that affect the prototype's evolution. New decisions 
 
 **Reason:** The Network is the first real project and needs to use its own contribution principles without pretending the founder is an unrelated external bounty applicant.
 
-**Consequence:** New records begin provisional and award no XP. The current self-verification route is restricted to low-risk, non-sensitive work, requires all criteria and a written rationale, stores a unique XP-award record, and atomically updates the contributor's XP without altering the community accepted-work gate. Higher-risk work remains provisional because independent-review and automated-check attestation flows are future work. The ledger is private per user; external GitHub URLs are evidence links, not automatic synchronization.
+**Consequence:** Private records begin provisional; explicitly low-risk, non-sensitive records may be self-verified with all criteria passing and a written rationale. Shared records are intentionally attached to a workspace and can be reviewed only by its reviewer or administrator roles, excluding the contributor. Acceptance requires every criterion to pass and written feedback. Request-changes preserves a review event and lets the original contributor update evidence and resubmit; rejection awards no XP. Accepted shared work uses rule `project-independent-v1`; its unique XP award, status updates to personal and workspace records, profile increment, and audit event are committed together. The project XP rules do not change the community accepted-work counter. Automated-check attestation and GitHub issue/PR synchronization remain future capabilities.
+
+## D-009 — Shared work requires role-separated review
+
+**Decision:** A project contribution can remain private or be explicitly shared to a workspace. Shared contributions cannot use the private self-verification path. Workspace reviewers and administrators can accept, request changes, or reject, but cannot review their own submissions.
+
+**Reason:** Contributors need a practical feedback loop without equating self-attestation with independent validation. Separating roles establishes the trust boundary before community-scale or higher-risk work is recognized.
+
+**Consequence:** The review queue is membership-scoped; reviewer identity, criteria results, decision, rationale, revision, and timestamp remain auditable. Acceptance is blocked until every criterion passes, and its XP award is idempotent. A workspace and a second, distinct signed-in reviewer account must exist for end-to-end verification; a solo founder cannot claim independent review without that separation.
