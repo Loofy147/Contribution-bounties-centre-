@@ -58,8 +58,20 @@ Server validation is consequential: UI controls alone are not the security bound
   
 ## Project 0 contribution ledger
 
-The current app includes a separate private project-contribution ledger alongside the community bounty submission system. Records are stored in a per-user table derived from the authenticated AppDeploy user ID, and the API only reads or updates the signed-in user's ledger. Each record can link to a GitHub issue, pull request, commit, document, test output, or other work item, plus separate evidence and an evidence note. It preserves a 1–10 item acceptance-criteria snapshot and the recorded risk level.
+The app includes a project-contribution ledger alongside community bounties. Private records are stored in a table derived from the authenticated contributor ID. A contributor may optionally associate a record with a workspace they belong to as a contributor, reviewer, or workspace administrator. Workspace association deliberately shares the work record with that workspace's review queue; records without a workspace remain private to the author.
 
-New records start as provisional with no XP. The current self-verification path is restricted server-side to explicitly low-risk, non-sensitive work, requires every criterion to pass and a rationale, writes a unique xp_awards ledger key, and increments profile XP in the same transaction. It does not increment the community accepted-work counter. Repeated verification cannot create a second XP award for the same project contribution.
+Each record can link to a GitHub issue, pull request, commit, document, test output, or other deliverable, with separate evidence and an evidence note. The record preserves a 1–10 acceptance-criteria snapshot and risk classification.
 
-Standard/high-risk work and records that mention security-sensitive or consequential operations remain provisional. A full independent-review workflow and automated-check attestation path are not yet implemented, so the UI must not imply that these records have been independently reviewed or automatically validated. GitHub links are references to work/evidence; this feature does not yet synchronize issue or pull-request status automatically.
+### Verification modes
+
+- **Private self-verification:** only low-risk, non-sensitive private records qualify. Every criterion must pass and a rationale is required. The unique `project_xp_<contribution-id>` award and profile XP update are committed transactionally. The community accepted-work counter is unchanged.
+- **Independent workspace review:** only workspace reviewers and administrators can access the queue and decide a record. The reviewer must be a different account from the contributor. Acceptance requires a Boolean result for every criterion and a written rationale; any failed criterion blocks acceptance. The review event preserves decision, reviewer identity, revision number, timestamp, feedback, and criterion results.
+- **Changes requested:** the original contributor may update the delivery description and evidence, then resubmit. The contribution's criteria snapshot stays fixed, revision number increases, and prior review events remain in a history capped at 20 events.
+- **Rejected:** the record remains in the contribution history, receives no XP, and cannot be resubmitted through this path. A new submission is required if the work changes materially.
+- **Accepted:** the shared and private copies are conditionally updated in one transaction with the review event, audit event, and exactly-once XP award. Independent acceptance uses rule version `project-independent-v1` and increments profile XP by 50 without changing the community accepted-work counter.
+
+Workspace review indexes are only created for work deliberately shared into a workspace. Membership role is checked server-side for reading and reviewing; the contributor cannot review their own submission. The user-scoped ledger remains the contributor's personal history.
+
+GitHub links remain evidence references, not automatic issue/PR synchronization. Automated-check attestation, evidence ingestion/scanning, verified payout, and a formal external credential are separate future capabilities. XP is a prototype reputation signal, not money or a professional qualification.
+
+Repository contract tests assert the route, role, criteria, resubmission, and award invariants. They are static checks, not a substitute for live multi-account integration tests. Before representing the workflow as production-hardened, exercise the full contributor/reviewer lifecycle with two real app accounts and verify race handling and persistence in the deployed database.

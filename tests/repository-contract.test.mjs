@@ -8,6 +8,7 @@ const manifest = JSON.parse(
 const backend = await readFile(new URL('../backend/index.ts', import.meta.url), 'utf8');
 const frontend = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const projectContributions = await readFile(new URL('../src/ProjectContributions.tsx', import.meta.url), 'utf8');
+const projectReviewQueue = await readFile(new URL('../src/ProjectReviewQueue.tsx', import.meta.url), 'utf8');
 const analytics = await readFile(new URL('../src/analytics.ts', import.meta.url), 'utf8');
 const packageManifest = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8'),
@@ -27,7 +28,7 @@ const secretsWorkflow = await readFile(
 const gitleaksConfig = await readFile(new URL('../.gitleaks.toml', import.meta.url), 'utf8');
 
 test('QA manifest includes the core workflow scenarios', () => {
-  assert.equal(manifest.length, 5, 'expected five consolidated browser scenarios');
+  assert.equal(manifest.length, 6, 'expected six consolidated browser scenarios');
   assert.equal(
     manifest.filter((item) => item.sanity === true).length,
     1,
@@ -41,6 +42,7 @@ test('QA manifest includes the core workflow scenarios', () => {
     'Keep higher-risk work provisional until stronger review',
     'Preserve bounty submission, review, revision and XP controls',
     'Check account and GitHub integration safety',
+    'Independently review and revise shared project work',
   ]) {
     assert.ok(names.has(required), `missing QA scenario: ${required}`);
   }
@@ -82,6 +84,45 @@ test('Project 0 contribution records link work and restrict self-verification XP
   assert.ok(verifyRoute.includes("db.tx.add('xp_awards'"));
   assert.ok(verifyRoute.includes("if (contribution.riskLevel !== 'low' || reviewRequired)"));
   assert.equal(verifyRoute.includes("acceptedCount: increment(1)"), false);
+});
+
+test('shared project contributions require independent workspace review', () => {
+  assert.ok(backend.includes("function workspaceProjectContributionsTable(workspaceId: string)"));
+  assert.ok(backend.includes("'GET /api/workspaces/:workspaceId/project-contributions/review-queue'"));
+  assert.ok(backend.includes("'POST /api/workspaces/:workspaceId/project-contributions/:id/review'"));
+  assert.ok(backend.includes("'POST /api/project-contributions/:id/resubmit'"));
+  assert.ok(backend.includes("if (contribution.workspaceId)"));
+  assert.ok(backend.includes("'project-independent-v1'"));
+  assert.ok(backend.includes("contribution.contributorId === user.userId"));
+  assert.ok(backend.includes("decision === 'accepted' && !criteriaChecks.every(Boolean)"));
+
+  const reviewRoute = backend.slice(
+    backend.indexOf("'POST /api/workspaces/:workspaceId/project-contributions/:id/review'"),
+    backend.indexOf("'POST /api/project-contributions/:id/resubmit'")
+  );
+  assert.ok(reviewRoute.includes("membership.role !== 'workspace_admin' && membership.role !== 'reviewer'"));
+  assert.ok(reviewRoute.includes("db.tx.add('xp_awards'"));
+  assert.ok(reviewRoute.includes("db.tx.update('profiles'"));
+  assert.ok(reviewRoute.includes("verificationLevel: 'independently_verified'"));
+  assert.equal(reviewRoute.includes("acceptedCount: increment(1)"), false);
+  assert.ok(reviewRoute.includes("if (decision === 'accepted' && !criteriaChecks.every(Boolean))"));
+
+  const resubmitRoute = backend.slice(
+    backend.indexOf("'POST /api/project-contributions/:id/resubmit'"),
+    backend.indexOf("'GET /api/bounties'")
+  );
+  assert.ok(resubmitRoute.includes("contribution.status !== 'needs_changes'"));
+  assert.ok(resubmitRoute.includes("contributorId: user.userId"));
+  assert.ok(resubmitRoute.includes("revisionNumber"));
+
+  assert.ok(projectContributions.includes("Shared review workspace"));
+  assert.ok(projectContributions.includes("ProjectReviewQueue"));
+  assert.ok(projectContributions.includes("'/resubmit'"));
+  assert.ok(projectContributions.includes("reviewHistory"));
+  assert.ok(projectReviewQueue.includes("project-contributions/review-queue"));
+  assert.ok(projectReviewQueue.includes("!draft.criteriaChecks.every(Boolean)"));
+  assert.ok(projectReviewQueue.includes("submitReview(item, 'needs_changes')"));
+  assert.ok(projectReviewQueue.includes("submitReview(item, 'rejected')"));
 });
 
 test('authenticated work views use private per-user indexes and bounded legacy migration', () => {

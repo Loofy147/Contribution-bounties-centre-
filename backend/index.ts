@@ -62,6 +62,15 @@ type ReviewEvent = {
   reviewedAt: string;
 };
 
+type ProjectContributionReviewEvent = {
+  decision: 'accepted' | 'needs_changes' | 'rejected';
+  feedback: string;
+  criteriaChecks: boolean[];
+  reviewerId: string;
+  reviewerName: string;
+  reviewedAt: string;
+  revisionNumber: number;
+};
 type ProjectContribution = {
   id: string;
   contributorId: string;
@@ -76,11 +85,16 @@ type ProjectContribution = {
   acceptanceCriteria: string[];
   criteriaChecks: boolean[];
   riskLevel: 'low' | 'standard' | 'high';
-  status: 'submitted' | 'accepted';
-  verificationLevel: 'provisional' | 'self_verified';
+  workspaceId?: string;
+  workspaceName?: string;
+  status: 'submitted' | 'needs_changes' | 'accepted' | 'rejected';
+  verificationLevel: 'provisional' | 'self_verified' | 'independently_verified';
   verificationNote?: string;
+  reviewFeedback?: string;
+  reviewHistory?: ProjectContributionReviewEvent[];
   reviewerId?: string;
   reviewerName?: string;
+  revisionNumber?: number;
   xpAwarded: number;
   createdAt: string;
   updatedAt: string;
@@ -190,6 +204,12 @@ function userReceivedTable(userId: string): string {
 }
 function userProjectContributionsTable(userId: string): string {
   return 'user_project_contributions_' + userPartitionKey(userId);
+}
+function workspaceProjectContributionsTable(workspaceId: string): string {
+  if (!validWorkspaceId(workspaceId)) {
+    throw new Error('Workspace ID did not match the expected identifier shape.');
+  }
+  return 'workspace_project_contributions_' + workspaceId;
 }
 function submissionGuardId(bountyId: string, userId: string): string {
   return 'active_' + userPartitionKey(userId) + '_' + encodeURIComponent(bountyId);
@@ -2087,6 +2107,11 @@ export const handler = router({
       const acceptanceCriteria = Array.isArray(body.acceptanceCriteria)
         ? body.acceptanceCriteria.map(value => typeof value === 'string' ? value.trim() : '')
         : [];
+      if (body.workspaceId !== undefined && body.workspaceId !== null &&
+          typeof body.workspaceId !== 'string') {
+        return error('Choose a valid review workspace or leave the field empty.', 400);
+      }
+      const workspaceIdInput = typeof body.workspaceId === 'string' ? body.workspaceId.trim() : '';
 
       if (!projectName || projectName.length < 3)
         return error('Project name must contain at least 3 characters.', 400);
@@ -2107,6 +2132,18 @@ export const handler = router({
           new Set(acceptanceCriteria.map(item => item.toLocaleLowerCase())).size !== acceptanceCriteria.length)
         return error('Provide 1–10 distinct acceptance criteria, each between 5 and 300 characters.', 400);
 
+      let workspace: WorkspaceRecord | null = null;
+      if (workspaceIdInput) {
+        if (!validWorkspaceId(workspaceIdInput)) return error('Invalid review workspace identifier.', 400);
+        const membership = await getWorkspaceMembership(workspaceIdInput, user.userId);
+        if (!membership || membership.role === 'observer') {
+          return error('Join the workspace as a contributor, reviewer, or administrator before sharing work for review.', 403);
+        }
+        const [workspaceRecord] = await db.get<WorkspaceRecord>('workspaces', [workspaceIdInput], { consistent: true });
+        if (!workspaceRecord) return error('Review workspace not found.', 404);
+        workspace = workspaceRecord;
+      }
+
       const createdAt = new Date().toISOString();
       const id = newRecordId('pc');
       const contribution: ProjectContribution = {
@@ -2123,21 +2160,25 @@ export const handler = router({
         acceptanceCriteria,
         criteriaChecks: acceptanceCriteria.map(() => false),
         riskLevel: riskLevel as ProjectContribution['riskLevel'],
+        ...(workspace ? { workspaceId: workspace.id, workspaceName: workspace.name } : {}),
         status: 'submitted',
         verificationLevel: 'provisional',
+        revisionNumber: 1,
         xpAwarded: 0,
         createdAt,
         updatedAt: createdAt,
       };
 
       try {
-        const outcome = await db.transact([
+        const writes = [
           db.tx.add(userProjectContributionsTable(user.userId), [contribution]),
+          ...(workspace ? [db.tx.add(workspaceProjectContributionsTable(workspace.id), [contribution])] : []),
           db.tx.add('audit_events', [
             appendAuditEvent(user.userId, 'project_contribution.recorded', 'project_contribution', id),
           ]),
-        ]);
-        if (!outcome[0][0] || !outcome[1][0])
+        ];
+        const outcome = await db.transact(writes);
+        if (outcome.some(result => !result[0]))
           return error('The contribution record could not be saved atomically. Refresh and retry.', 503);
       } catch (cause: unknown) {
         if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
@@ -2169,6 +2210,9 @@ export const handler = router({
       }
       if (contribution.status !== 'submitted')
         return error('This contribution is not available for verification.', 409);
+      if (contribution.workspaceId) {
+        return error('Workspace-linked contributions require a separate authorized reviewer; self-verification is disabled for shared records.', 403);
+      }
 
       const criteriaChecks = Array.isArray(body.criteriaChecks) ? body.criteriaChecks : [];
       if (criteriaChecks.some(value => typeof value !== 'boolean') ||
@@ -2262,6 +2306,286 @@ export const handler = router({
         xpAwarded: 50,
         message: 'Low-risk contribution self-verified. 50 XP recorded.',
       });
+    },
+  ],
+
+  'GET /api/workspaces/:workspaceId/project-contributions/review-queue': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      const workspaceId = ctx.params.workspaceId;
+      if (!validWorkspaceId(workspaceId)) return error('Invalid workspace identifier.', 400);
+      const membership = await getWorkspaceMembership(workspaceId, user.userId);
+      if (!membership || (membership.role !== 'workspace_admin' && membership.role !== 'reviewer')) {
+        return error('Workspace reviewer or administrator permission required.', 403);
+      }
+      const page = await db.list<ProjectContribution>(workspaceProjectContributionsTable(workspaceId), { limit: 100 });
+      const contributions = page.items
+        .filter(item => item.contributorId !== user.userId && item.status === 'submitted')
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      return json({ contributions, hasMore: Boolean(page.nextToken) });
+    },
+  ],
+
+  'POST /api/workspaces/:workspaceId/project-contributions/:id/review': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      const workspaceId = ctx.params.workspaceId;
+      const body = objectBody(ctx.body);
+      const decision = body.decision;
+      if (!validWorkspaceId(workspaceId)) return error('Invalid workspace identifier.', 400);
+      if (decision !== 'accepted' && decision !== 'needs_changes' && decision !== 'rejected') {
+        return error('Choose accept, request changes, or reject.', 400);
+      }
+      const feedback = textField(body.feedback, 1000);
+      if (!feedback || feedback.length < 15) {
+        return error('Provide review feedback of at least 15 characters.', 400);
+      }
+      const criteriaChecks = Array.isArray(body.criteriaChecks) ? body.criteriaChecks : [];
+      if (criteriaChecks.some(value => typeof value !== 'boolean') ||
+          criteriaChecks.length < 1 || criteriaChecks.length > 10) {
+        return error('Record a true or false result for every acceptance criterion.', 400);
+      }
+      if (decision === 'accepted' && !criteriaChecks.every(Boolean)) {
+        return error('Acceptance requires every acceptance criterion to pass.', 400);
+      }
+
+      const membership = await getWorkspaceMembership(workspaceId, user.userId);
+      if (!membership || (membership.role !== 'workspace_admin' && membership.role !== 'reviewer')) {
+        return error('Workspace reviewer or administrator permission required.', 403);
+      }
+      const sharedTable = workspaceProjectContributionsTable(workspaceId);
+      const [contribution] = await db.get<ProjectContribution>(sharedTable, [ctx.params.id], { consistent: true });
+      if (!contribution || contribution.workspaceId !== workspaceId) return error('Contribution not found in this workspace.', 404);
+      if (contribution.contributorId === user.userId) {
+        return error('Contributors cannot independently review their own work.', 403);
+      }
+      if (contribution.status === decision && contribution.reviewerId === user.userId) {
+        return json({
+          reviewed: true,
+          duplicate: true,
+          status: contribution.status,
+          verificationLevel: contribution.verificationLevel,
+          xpAwarded: contribution.xpAwarded,
+          message: 'This review decision was already recorded.',
+        });
+      }
+      if (contribution.status !== 'submitted') {
+        return error('This contribution is not awaiting review. Refresh the queue before acting.', 409);
+      }
+      const personalTable = userProjectContributionsTable(contribution.contributorId);
+      const [personal] = await db.get<ProjectContribution>(personalTable, [contribution.id], { consistent: true });
+      if (!personal || personal.workspaceId !== workspaceId ||
+          personal.status !== 'submitted' || personal.updatedAt !== contribution.updatedAt) {
+        return error('The shared review copy is out of sync. Refresh the contribution before reviewing.', 409);
+      }
+
+      const now = new Date().toISOString();
+      const reviewerName = contributorName(user);
+      const revisionNumber = contribution.revisionNumber ?? 1;
+      const reviewEvent: ProjectContributionReviewEvent = {
+        decision: decision as ProjectContributionReviewEvent['decision'],
+        feedback,
+        criteriaChecks: [...criteriaChecks] as boolean[],
+        reviewerId: user.userId,
+        reviewerName,
+        reviewedAt: now,
+        revisionNumber,
+      };
+      const reviewHistory = [...(contribution.reviewHistory ?? []), reviewEvent].slice(-20);
+      const patch = {
+        status: decision as ProjectContribution['status'],
+        verificationLevel: decision === 'accepted' ? 'independently_verified' as const : 'provisional' as const,
+        criteriaChecks: [...criteriaChecks] as boolean[],
+        reviewFeedback: feedback,
+        reviewHistory,
+        reviewerId: user.userId,
+        reviewerName,
+        verificationNote: undefined,
+        xpAwarded: decision === 'accepted' ? 50 : 0,
+        acceptedAt: decision === 'accepted' ? now : undefined,
+        updatedAt: now,
+      };
+
+      if (decision === 'accepted') {
+        const [existingAward] = await db.get<Record<string, unknown>>('xp_awards', ['project_xp_' + contribution.id], { consistent: true });
+        if (existingAward) {
+          return error('An XP award already exists for this contribution. The record needs reconciliation before another decision.', 409);
+        }
+        const [profile] = await db.get<Profile>('profiles', [contribution.contributorId], { consistent: true });
+        if (!profile) {
+          await db.tx.add('profiles', [{
+            id: contribution.contributorId,
+            displayName: contribution.contributorName || 'Contributor',
+            xp: 0,
+            acceptedCount: 0,
+          }]);
+          const [confirmedProfile] = await db.get<Profile>('profiles', [contribution.contributorId], { consistent: true });
+          if (!confirmedProfile) return error('The contributor profile could not be initialized for the XP award.', 503);
+        }
+      }
+
+      const audit = db.tx.add('audit_events', [
+        appendAuditEvent(user.userId, 'project_contribution.independently_reviewed', 'project_contribution', contribution.id, {
+          targetUserId: contribution.contributorId,
+          role: decision,
+        }),
+      ]);
+      try {
+        let committed = false;
+        if (decision === 'accepted') {
+          const [personalWrite, sharedWrite, awardWrite, profileWrite, auditWrite] = await db.transact([
+            db.tx.update(personalTable, [{
+              id: contribution.id,
+              record: patch,
+              if: { status: 'submitted', contributorId: contribution.contributorId, updatedAt: personal.updatedAt },
+            }], { patch: true }),
+            db.tx.update(sharedTable, [{
+              id: contribution.id,
+              record: patch,
+              if: { status: 'submitted', contributorId: contribution.contributorId, updatedAt: contribution.updatedAt },
+            }], { patch: true }),
+            db.tx.add('xp_awards', [{
+              id: 'project_xp_' + contribution.id,
+              userId: contribution.contributorId,
+              contributionId: contribution.id,
+              amount: 50,
+              ruleVersion: 'project-independent-v1',
+              verificationLevel: 'independently_verified',
+              reviewerId: user.userId,
+              createdAt: now,
+            }]),
+            db.tx.update('profiles', [{
+              id: contribution.contributorId,
+              record: { xp: increment(50) },
+            }], { patch: true }),
+            audit,
+          ]);
+          committed = Boolean(personalWrite[0] && sharedWrite[0] && awardWrite[0] && profileWrite[0] && auditWrite[0]);
+        } else {
+          const [personalWrite, sharedWrite, auditWrite] = await db.transact([
+            db.tx.update(personalTable, [{
+              id: contribution.id,
+              record: patch,
+              if: { status: 'submitted', contributorId: contribution.contributorId, updatedAt: personal.updatedAt },
+            }], { patch: true }),
+            db.tx.update(sharedTable, [{
+              id: contribution.id,
+              record: patch,
+              if: { status: 'submitted', contributorId: contribution.contributorId, updatedAt: contribution.updatedAt },
+            }], { patch: true }),
+            audit,
+          ]);
+          committed = Boolean(personalWrite[0] && sharedWrite[0] && auditWrite[0]);
+        }
+        if (!committed) return error('The review decision was not fully confirmed. Refresh the queue and inspect the record before retrying.', 503);
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        const [saved] = await db.get<ProjectContribution>(sharedTable, [contribution.id], { consistent: true });
+        if (saved && saved.status === decision && saved.reviewerId === user.userId && saved.updatedAt === now) {
+          return json({
+            reviewed: true,
+            duplicate: true,
+            status: saved.status,
+            verificationLevel: saved.verificationLevel,
+            xpAwarded: saved.xpAwarded,
+            message: 'The review decision was committed. No duplicate award was created.',
+          });
+        }
+        return error('Review could not be confirmed. Refresh the queue and inspect the record before retrying.', 503);
+      }
+
+      return json({
+        reviewed: true,
+        duplicate: false,
+        status: decision,
+        verificationLevel: patch.verificationLevel,
+        xpAwarded: patch.xpAwarded,
+        message: decision === 'accepted'
+          ? 'Independent review accepted the contribution. 50 XP was awarded once.'
+          : decision === 'needs_changes'
+            ? 'Changes requested. The contributor may revise and resubmit.'
+            : 'Contribution rejected. No XP was awarded.',
+      });
+    },
+  ],
+
+  'POST /api/project-contributions/:id/resubmit': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      const body = objectBody(ctx.body);
+      const personalTable = userProjectContributionsTable(user.userId);
+      const [contribution] = await db.get<ProjectContribution>(personalTable, [ctx.params.id], { consistent: true });
+      if (!contribution) return error('Contribution not found in your private work log.', 404);
+      if (contribution.contributorId !== user.userId) return error('Only the original contributor can resubmit work.', 403);
+      if (contribution.status !== 'needs_changes') return error('Only work returned for changes can be resubmitted.', 409);
+      if (!contribution.workspaceId) return error('This contribution has no shared review workspace; resubmission cannot be safely routed.', 409);
+
+      const description = textField(body.description, 4000);
+      const evidenceNote = textField(body.evidenceNote, 1000);
+      const workUrl = validUrl(body.workUrl, true);
+      const evidenceUrl = validUrl(body.evidenceUrl, true);
+      if (!description || description.length < 30) return error('Describe the updated work in at least 30 characters.', 400);
+      if (!evidenceNote || evidenceNote.length < 15) return error('Add an evidence note of at least 15 characters.', 400);
+      if (workUrl === null || evidenceUrl === null) return error('Work and evidence links must be valid HTTP or HTTPS URLs when provided.', 400);
+
+      const sharedTable = workspaceProjectContributionsTable(contribution.workspaceId);
+      const [shared] = await db.get<ProjectContribution>(sharedTable, [contribution.id], { consistent: true });
+      if (!shared || shared.contributorId !== user.userId || shared.status !== 'needs_changes' ||
+          shared.updatedAt !== contribution.updatedAt) {
+        return error('The shared review copy is out of sync. Refresh the record before resubmitting.', 409);
+      }
+
+      const now = new Date().toISOString();
+      const revisionNumber = (contribution.revisionNumber ?? 1) + 1;
+      const patch = {
+        description,
+        evidenceNote,
+        workUrl: workUrl || undefined,
+        evidenceUrl: evidenceUrl || undefined,
+        status: 'submitted' as const,
+        verificationLevel: 'provisional' as const,
+        verificationNote: undefined,
+        reviewFeedback: undefined,
+        reviewerId: undefined,
+        reviewerName: undefined,
+        acceptedAt: undefined,
+        criteriaChecks: contribution.acceptanceCriteria.map(() => false),
+        xpAwarded: 0,
+        revisionNumber,
+        updatedAt: now,
+      };
+      try {
+        const [personalWrite, sharedWrite, auditWrite] = await db.transact([
+          db.tx.update(personalTable, [{
+            id: contribution.id,
+            record: patch,
+            if: { status: 'needs_changes', contributorId: user.userId, updatedAt: contribution.updatedAt },
+          }], { patch: true }),
+          db.tx.update(sharedTable, [{
+            id: contribution.id,
+            record: patch,
+            if: { status: 'needs_changes', contributorId: user.userId, updatedAt: shared.updatedAt },
+          }], { patch: true }),
+          db.tx.add('audit_events', [
+            appendAuditEvent(user.userId, 'project_contribution.resubmitted', 'project_contribution', contribution.id),
+          ]),
+        ]);
+        if (!personalWrite[0] || !sharedWrite[0] || !auditWrite[0]) {
+          return error('The revised contribution could not be confirmed. Refresh before retrying.', 503);
+        }
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        const [saved] = await db.get<ProjectContribution>(personalTable, [contribution.id], { consistent: true });
+        if (saved?.status === 'submitted' && saved.revisionNumber === revisionNumber && saved.updatedAt === now) {
+          return json({ contribution: saved, duplicate: true });
+        }
+        return error('Resubmission could not be confirmed. Refresh the work log before retrying.', 503);
+      }
+      const [saved] = await db.get<ProjectContribution>(personalTable, [contribution.id], { consistent: true });
+      return json({ contribution: saved ?? { ...contribution, ...patch } });
     },
   ],
 
