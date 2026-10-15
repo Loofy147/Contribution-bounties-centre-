@@ -641,3 +641,18 @@
     grid-template-columns: 1fr;
   }
 }
+
+.pc-empty__actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@media (max-width: 700px) {
+  .pc-empty__actions {
+    flex-direction: column;
+  }
+  .pc-empty__actions .pc-button {
+    width: 100%;
+  }
+}
