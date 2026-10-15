@@ -102,5 +102,34 @@
       "Attempt an unconfigured repository or unauthorized write"
     ],
     "expected": "The app never claims an unconfigured identity is linked, token values stay server-side, repository access is restricted to configured repositories, and file writes remain owner-gated and explicit."
+  },
+  {
+    "name": "Independently review and revise shared project work",
+    "viewport": "desktop",
+    "covers": [
+      "workspace-bound contribution sharing",
+      "reviewer and administrator role authorization",
+      "separate contributor and reviewer identities",
+      "all-criteria acceptance gate",
+      "request-changes and resubmission lifecycle",
+      "review history and audit events",
+      "exactly-once independent XP award",
+      "no change to community accepted-work gate"
+    ],
+    "description": "Exercises the complete workspace-scoped lifecycle for higher-risk founder/operator work, from submission through reviewer feedback, revision, acceptance, and one-time XP.",
+    "setup": [
+      "Use a configured platform-owner account to create a review workspace",
+      "Ensure separate accounts are members with contributor and reviewer roles"
+    ],
+    "steps": [
+      "As the contributor, record a standard-risk contribution with a work link, evidence note, two acceptance criteria, and the shared workspace selected",
+      "Sign in as the reviewer and open Independent review queue",
+      "Attempt acceptance with one criterion unchecked and confirm the app blocks the decision",
+      "Provide rationale and request changes",
+      "Sign in as the contributor, update the delivery description and evidence note, and resubmit",
+      "Sign back in as the reviewer, pass every criterion, enter specific rationale, and accept the revision",
+      "Refresh the contributor ledger and profile, then attempt to repeat the review decision"
+    ],
+    "expected": "The first review leaves the contribution in Changes requested with no XP; resubmission returns it to the queue and preserves prior review history. The accepted revision is labeled Independently reviewed, names the reviewer, and awards exactly 50 XP once without incrementing the community accepted-work counter. Contributors cannot review their own work and members outside the workspace cannot read its queue."
   }
 ]
