@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { api, auth } from '@appdeploy/client';
 import { captureProductEvent, identifyAnalyticsUser, resetAnalyticsIdentity } from './analytics';
+import ProjectContributions from './ProjectContributions';
 
 type Bounty = {
   id: string;
@@ -1345,7 +1346,9 @@ function App() {
           </button>
         </div>
       ) : (
-        <div className="work-list">
+        <>
+          <ProjectContributions onUpdated={() => void refreshData(false)} />
+          <div className="work-list">
           {work.mySubmissions.length === 0 && (
             <div className="empty-state compact">
               <div className="empty-symbol">
@@ -1416,7 +1419,8 @@ function App() {
                 </div>
               </article>
             ))}
-        </div>
+          </div>
+        </>
       )}
     </>
   );
@@ -1993,8 +1997,7 @@ function App() {
                   'nav-item ' + (view === item.name ? 'nav-active' : '')
                 }
                 onClick={() => {
-                  setView(item.name);
-                  setMobileNav(false);
+                  setView(item.name);                  setMobileNav(false);
                 }}
               >
                 <Icon size={18} />
@@ -2034,7 +2037,8 @@ function App() {
           {user ? (
             <div className="user-chip">
               <div className="avatar">
-                {(user.name || user.email || 'C').slice(0, 1).toUpperCase()}              </div>
+                {(user.name || user.email || 'C').slice(0, 1).toUpperCase()}
+              </div>
               <div className="user-chip-copy">
                 <strong>{user.name || 'Contributor'}</strong>
                 <small>{user.email || 'Signed in'}</small>

@@ -7,6 +7,7 @@ const manifest = JSON.parse(
 );
 const backend = await readFile(new URL('../backend/index.ts', import.meta.url), 'utf8');
 const frontend = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const projectContributions = await readFile(new URL('../src/ProjectContributions.tsx', import.meta.url), 'utf8');
 const analytics = await readFile(new URL('../src/analytics.ts', import.meta.url), 'utf8');
 const packageManifest = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8'),
@@ -26,7 +27,7 @@ const secretsWorkflow = await readFile(
 const gitleaksConfig = await readFile(new URL('../.gitleaks.toml', import.meta.url), 'utf8');
 
 test('QA manifest includes the core workflow scenarios', () => {
-  assert.equal(manifest.length, 11, 'expected eleven documented browser scenarios');
+  assert.equal(manifest.length, 5, 'expected five consolidated browser scenarios');
   assert.equal(
     manifest.filter((item) => item.sanity === true).length,
     1,
@@ -36,11 +37,10 @@ test('QA manifest includes the core workflow scenarios', () => {
   const names = new Set(manifest.map((item) => item.name));
   for (const required of [
     'Browse bounties and inspect the acceptance contract',
-    'Create a bounty with validated acceptance criteria',
-    'Submit work against a snapshot of agreed criteria',
-    'Request changes, revise, and accept only the compliant version',
-    'Reject unauthorized and incomplete acceptance transitions',
-    'Review account roles and GitHub connection prerequisites',
+    "Record and verify the founder's project contribution",
+    'Keep higher-risk work provisional until stronger review',
+    'Preserve bounty submission, review, revision and XP controls',
+    'Check account and GitHub integration safety',
   ]) {
     assert.ok(names.has(required), `missing QA scenario: ${required}`);
   }
@@ -60,6 +60,29 @@ test('backend source retains key acceptance and resubmission guards', () => {
   assert.match(backend, /record: \{ xp: increment\(50\), acceptedCount: increment\(1\) \}/);
 });
 
+
+test('Project 0 contribution records link work and restrict self-verification XP', () => {
+  assert.ok(backend.includes("function userProjectContributionsTable(userId: string)"));
+  assert.ok(backend.includes("'GET /api/project-contributions'"));
+  assert.ok(backend.includes("'POST /api/project-contributions'"));
+  assert.ok(backend.includes("'POST /api/project-contributions/:id/verify'"));
+  assert.ok(backend.includes('requiresIndependentProjectReview(contribution)'));
+  assert.ok(backend.includes("ruleVersion: 'project-self-v1'"));
+  assert.ok(backend.includes("appendAuditEvent(user.userId, 'project_contribution.self_verified'"));
+  assert.ok(frontend.includes("import ProjectContributions from './ProjectContributions'"));
+  assert.ok(projectContributions.includes("api.post('/api/project-contributions'"));
+  assert.ok(projectContributions.includes('item.workUrl'));
+  assert.ok(projectContributions.includes('item.evidenceUrl'));
+
+  const verifyRoute = backend.slice(
+    backend.indexOf("'POST /api/project-contributions/:id/verify'"),
+    backend.indexOf("'GET /api/bounties'")
+  );
+  assert.ok(verifyRoute.includes("record: { xp: increment(50) }"));
+  assert.ok(verifyRoute.includes("db.tx.add('xp_awards'"));
+  assert.ok(verifyRoute.includes("if (contribution.riskLevel !== 'low' || reviewRequired)"));
+  assert.equal(verifyRoute.includes("acceptedCount: increment(1)"), false);
+});
 
 test('authenticated work views use private per-user indexes and bounded legacy migration', () => {
   assert.ok(backend.includes('function userPartitionKey(userId: string)'));

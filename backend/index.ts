@@ -8,7 +8,7 @@ import {
   isAppDatabaseError,
   secrets,
 } from '@appdeploy/sdk';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 
 type Bounty = {
   title: string;
@@ -61,6 +61,31 @@ type ReviewEvent = {
   reviewerName: string;
   reviewedAt: string;
 };
+
+type ProjectContribution = {
+  id: string;
+  contributorId: string;
+  contributorName: string;
+  projectName: string;
+  workTitle: string;
+  workType: 'requirements' | 'architecture' | 'research' | 'software' | 'testing' | 'documentation' | 'design' | 'security' | 'integration' | 'operations' | 'coordination' | 'community' | 'other';
+  description: string;
+  workUrl?: string;
+  evidenceUrl?: string;
+  evidenceNote: string;
+  acceptanceCriteria: string[];
+  criteriaChecks: boolean[];
+  riskLevel: 'low' | 'standard' | 'high';
+  status: 'submitted' | 'accepted';
+  verificationLevel: 'provisional' | 'self_verified';
+  verificationNote?: string;
+  reviewerId?: string;
+  reviewerName?: string;
+  xpAwarded: number;
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt?: string;
+};
 type Profile = { displayName: string; xp: number; acceptedCount: number };
 type WorkspaceRole = 'workspace_admin' | 'reviewer' | 'contributor' | 'observer';
 type WorkspaceRecord = { id: string; name: string; createdBy: string; createdAt: string };
@@ -92,6 +117,7 @@ const PLATFORM_OWNER_SECRET = 'PLATFORM_OWNER_EMAILS';
 const GITHUB_CLIENT_ID_SECRET = 'GITHUB_CLIENT_ID';
 const GITHUB_CLIENT_SECRET_SECRET = 'GITHUB_CLIENT_SECRET';
 const GITHUB_PAT_SECRET = 'GITHUB_PAT';
+const MCP_TOKEN_SECRET = 'CONTRIBQUEST_MCP_TOKEN';
 const GITHUB_PAT_REPOSITORIES = ['Contribution-bounties-centre-', 'contribution-network'] as const;
 type GitHubPatRepository = typeof GITHUB_PAT_REPOSITORIES[number];
 
@@ -161,6 +187,9 @@ function userSubmissionsTable(userId: string): string {
 }
 function userReceivedTable(userId: string): string {
   return 'user_received_' + userPartitionKey(userId);
+}
+function userProjectContributionsTable(userId: string): string {
+  return 'user_project_contributions_' + userPartitionKey(userId);
 }
 function submissionGuardId(bountyId: string, userId: string): string {
   return 'active_' + userPartitionKey(userId) + '_' + encodeURIComponent(bountyId);
@@ -607,6 +636,17 @@ function validUrl(value: unknown, optional = false): string | null {
     return null;
   }
 }
+
+function requiresIndependentProjectReview(contribution: Pick<ProjectContribution, 'projectName' | 'workTitle' | 'workType' | 'description'>): boolean {
+  if (contribution.workType === 'security') return true;
+  const sensitiveTerms = /\b(security|authorization|authentication|access control|permission|credential|secret|token|key management|payment|financial|production|release|deployment|incident|safety|oauth|bearer)\b/i;
+  return sensitiveTerms.test([
+    contribution.projectName,
+    contribution.workTitle,
+    contribution.description,
+  ].join(' '));
+}
+
 const DEFAULT_ACCEPTANCE_CRITERIA = [
   'The deliverable meets the stated objective.',
   'The result is complete and can be reviewed against the agreed scope.',
@@ -627,7 +667,494 @@ async function readBounties() {
   return result.items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+type CreateBountyOutcome =
+  | { ok: true; bounty: Bounty & { id: string } }
+  | { ok: false; message: string; status: number };
+
+async function createBountyForUser(
+  user: { userId: string; email?: string; name?: string },
+  input: unknown
+): Promise<CreateBountyOutcome> {
+  const body = objectBody(input);
+  const title = textField(body.title, 100);
+  const description = textField(body.description, 2500);
+  const category = textField(body.category, 50);
+  const rawCriteria = Array.isArray(body.acceptanceCriteria) ? body.acceptanceCriteria : [];
+  const acceptanceCriteria = rawCriteria
+    .filter((value): value is string => typeof value === 'string')
+    .map(value => value.trim());
+  const reward = Number(body.reward);
+  const skills = Array.isArray(body.skills)
+    ? body.skills
+        .filter((value): value is string => typeof value === 'string')
+        .map(value => value.trim())
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+  const repoUrl = validUrl(body.repoUrl, true);
+  const tier =
+    body.tier === 'paid'
+      ? 'paid'
+      : body.tier === 'community'
+        ? 'community'
+        : null;
+  const minAccepted = body.minAccepted === undefined ? 2 : Number(body.minAccepted);
+
+  if (!title || title.length < 8)
+    return { ok: false, message: 'Use a clear bounty title of at least 8 characters.', status: 400 };
+  if (!description || description.length < 20)
+    return { ok: false, message: 'Describe the expected work in at least 20 characters.', status: 400 };
+  if (!category) return { ok: false, message: 'Choose a bounty category.', status: 400 };
+  if (acceptanceCriteria.length < 1 || acceptanceCriteria.length > 10)
+    return { ok: false, message: 'Provide between 1 and 10 acceptance criteria, one per line.', status: 400 };
+  if (acceptanceCriteria.some(item => item.length < 5 || item.length > 240))
+    return { ok: false, message: 'Each acceptance criterion must be between 5 and 240 characters.', status: 400 };
+  if (new Set(acceptanceCriteria.map(item => item.toLowerCase())).size !== acceptanceCriteria.length)
+    return { ok: false, message: 'Acceptance criteria must be unique. Remove duplicate checks.', status: 400 };
+  if (!Number.isFinite(reward) || reward < 1 || reward > 100000)
+    return { ok: false, message: 'The offer must be between $1 and $100,000.', status: 400 };
+  if (repoUrl === null)
+    return { ok: false, message: 'Repository URL must be a valid HTTP or HTTPS link.', status: 400 };
+  if (!tier) return { ok: false, message: 'Choose community or paid bounty type.', status: 400 };
+  if (!Number.isInteger(minAccepted) || minAccepted < 1 || minAccepted > 20)
+    return { ok: false, message: 'Minimum accepted contributions must be between 1 and 20.', status: 400 };
+
+  const record = {
+    title,
+    description,
+    reward,
+    currency: 'USD',
+    category,
+    acceptanceCriteria,
+    skills,
+    repoUrl: repoUrl || undefined,
+    createdBy: user.userId,
+    createdByName: contributorName(user),
+    createdAt: new Date().toISOString(),
+    status: 'open' as const,
+    tier,
+    minAccepted: tier === 'paid' ? minAccepted : 0,
+  };
+  const id = newRecordId('b');
+  const persisted = { ...record, id };
+
+  try {
+    const bountyWrite = db.tx.add('bounties', [persisted]);
+    const bountyIndexWrite = db.tx.add(userBountiesTable(user.userId), [persisted]);
+    const [bountyIds, indexIds] = await db.transact([bountyWrite, bountyIndexWrite]);
+    if (!bountyIds[0] || !indexIds[0])
+      return { ok: false, message: 'The bounty could not be saved. Please retry.', status: 503 };
+  } catch (cause: unknown) {
+    if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+    return { ok: false, message: 'The bounty could not be saved atomically. Refresh and retry.', status: 503 };
+  }
+
+  return { ok: true, bounty: persisted };
+}
+
+type McpOwner = { userId: string; email: string; name: string };
+
+async function resolveMcpOwner(): Promise<McpOwner> {
+  const configuredOwners = await configuredOwnerEmails();
+  const matches = new Map<string, { userId: string; email: string }>();
+  for (const email of configuredOwners) {
+    const [index] = await db.get<AccountEmailIndex>('account_email_index', [emailKey(email)], { consistent: true });
+    if (index?.userId) matches.set(index.userId, { userId: index.userId, email });
+  }
+  if (matches.size !== 1) throw new Error('mcp_owner_missing_or_ambiguous');
+
+  const selected = [...matches.values()][0];
+  if (!(await isPlatformOwner({ userId: selected.userId, email: selected.email })))
+    throw new Error('mcp_platform_owner_not_configured');
+
+  const [identity] = await db.get<AccountIdentity>('account_identities', [selected.userId], { consistent: true });
+  if (!identity) throw new Error('mcp_owner_identity_missing');
+  return { userId: selected.userId, email: selected.email, name: identity.displayName };
+}
+
+function mcpHeaderValue(event: unknown, name: string): string {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return '';
+  const headers = (event as Record<string, unknown>).headers;
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return '';
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (key.toLowerCase() === name.toLowerCase() && typeof value === 'string') return value;
+  }
+  return '';
+}
+
+function mcpOriginAllowed(origin: string): boolean {
+  if (!origin) return true;
+  return [
+    'https://chatgpt.com',
+    'https://chat.openai.com',
+    'https://platform.openai.com',
+    'http://localhost:6274',
+    'http://127.0.0.1:6274',
+  ].includes(origin);
+}
+
+function mcpCorsHeaders(origin: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, MCP-Protocol-Version',
+    'Access-Control-Expose-Headers': 'MCP-Protocol-Version',
+    Vary: 'Origin',
+  };
+  if (origin && mcpOriginAllowed(origin)) headers['Access-Control-Allow-Origin'] = origin;
+  return headers;
+}
+
+function mcpHttpResponse(
+  statusCode: number,
+  payload: unknown,
+  headers: Record<string, string> = {}
+): { statusCode: number; headers: Record<string, string>; body: string } {
+  return {
+    statusCode,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
+    body: payload === undefined ? '' : JSON.stringify(payload),
+  };
+}
+
+async function validateMcpBearer(event: unknown): Promise<{ ok: true } | { ok: false; status: number; message: string }> {
+  let expected: string | null = null;
+  try {
+    const names = await secrets.listSecretNames();
+    if (!names.includes(MCP_TOKEN_SECRET))
+      return { ok: false, status: 503, message: 'ContribQuest MCP authentication is not configured yet.' };
+    const configured = await secrets.readSecret(MCP_TOKEN_SECRET);
+    if (configured && configured.trim()) expected = configured.trim();
+  } catch {
+    return { ok: false, status: 503, message: 'ContribQuest MCP authentication is temporarily unavailable.' };
+  }
+  if (!expected) return { ok: false, status: 503, message: 'ContribQuest MCP authentication is not configured yet.' };
+
+  const authorization = mcpHeaderValue(event, 'authorization');
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  if (!match) return { ok: false, status: 401, message: 'A valid bearer token is required.' };
+
+  const candidateDigest = createHash('sha256').update(match[1].trim()).digest();
+  const expectedDigest = createHash('sha256').update(expected).digest();
+  if (!timingSafeEqual(candidateDigest, expectedDigest))
+    return { ok: false, status: 401, message: 'A valid bearer token is required.' };
+  return { ok: true };
+}
+
+function mcpBountyView(bounty: Bounty & { id: string }): Record<string, unknown> {
+  return {
+    id: bounty.id,
+    title: bounty.title,
+    description: bounty.description,
+    reward: bounty.reward,
+    currency: bounty.currency,
+    category: bounty.category,
+    skills: bounty.skills,
+    ...(bounty.repoUrl ? { repoUrl: bounty.repoUrl } : {}),
+    createdByName: bounty.createdByName,
+    createdAt: bounty.createdAt,
+    status: bounty.status,
+    tier: bounty.tier,
+    minAccepted: bounty.minAccepted,
+    acceptanceCriteria: bounty.acceptanceCriteria ?? [],
+    sample: Boolean(bounty.sample),
+  };
+}
+
+function mcpContributionView(contribution: Contribution & { id: string }): Record<string, unknown> {
+  return {
+    id: contribution.id,
+    bountyId: contribution.bountyId,
+    bountyTitle: contribution.bountyTitle,
+    bountyTier: contribution.bountyTier,
+    submitterId: contribution.submitterId,
+    submitterName: contribution.submitterName,
+    ownerId: contribution.ownerId,
+    ...(contribution.workUrl ? { workUrl: contribution.workUrl } : {}),
+    note: contribution.note,
+    acceptanceCriteria: contribution.acceptanceCriteria ?? [],
+    criteriaChecks: contribution.criteriaChecks ?? [],
+    reviewHistory: contribution.reviewHistory ?? [],
+    ...(contribution.feedback ? { feedback: contribution.feedback } : {}),
+    status: contribution.status,
+    createdAt: contribution.createdAt,
+    lastSubmittedAt: contribution.lastSubmittedAt ?? null,
+    revisionNumber: contribution.revisionNumber ?? 1,
+    revisionHistory: contribution.revisionHistory ?? [],
+    reviewedAt: contribution.reviewedAt ?? null,
+  };
+}
+
+function mcpToolDefinitions(): Record<string, unknown>[] {
+  return [
+    {
+      name: 'contribquest_get_status',
+      title: 'Get ContribQuest status',
+      description: 'Returns the connected ContribQuest owner account, platform role, deployment identity, and configured integration status. It never returns credentials or token values.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    {
+      name: 'contribquest_list_bounties',
+      title: 'List bounties',
+      description: 'Lists recent ContribQuest bounty listings. Use status=open, completed, or all. Paid entries are listings only; this tool does not process payments.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['open', 'completed', 'all'], description: 'Filter by bounty status; defaults to open.' },
+          limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Maximum listings to return; defaults to 20.' },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    {
+      name: 'contribquest_get_bounty',
+      title: 'Get bounty details',
+      description: 'Returns the full public details and acceptance criteria for one bounty by its ID.',
+      inputSchema: {
+        type: 'object',
+        properties: { id: { type: 'string', minLength: 1, maxLength: 160 } },
+        required: ['id'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    {
+      name: 'contribquest_get_my_work',
+      title: 'Get my ContribQuest work',
+      description: 'Returns the connected platform owner’s own bounties, submissions, received submissions, profile XP and accepted-work count. Includes private contribution/review details visible to that owner.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    {
+      name: 'contribquest_list_workspaces',
+      title: 'List my workspaces',
+      description: 'Lists workspaces in the connected platform owner’s membership index and the owner’s role in each.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    {
+      name: 'contribquest_create_bounty',
+      title: 'Create a bounty',
+      description: 'Creates a public ContribQuest bounty using the same server-side validation and atomic persistence path as the app. Requires a title, description, category, reward, tier and 1–10 unique acceptance criteria. A paid bounty is a listing only, not a payment or escrow promise.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', minLength: 8, maxLength: 100 },
+          description: { type: 'string', minLength: 20, maxLength: 2500 },
+          category: { type: 'string', minLength: 1, maxLength: 50 },
+          reward: { type: 'number', minimum: 1, maximum: 100000 },
+          tier: { type: 'string', enum: ['community', 'paid'] },
+          acceptanceCriteria: { type: 'array', minItems: 1, maxItems: 10, items: { type: 'string', minLength: 5, maxLength: 240 } },
+          skills: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 80 } },
+          repoUrl: { type: 'string', maxLength: 2048 },
+          minAccepted: { type: 'integer', minimum: 1, maximum: 20 },
+        },
+        required: ['title', 'description', 'category', 'reward', 'tier', 'acceptanceCriteria'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+  ];
+}
+
+function mcpToolSuccess(value: unknown): Record<string, unknown> {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(value) }],
+    structuredContent: value,
+  };
+}
+
+function mcpToolFailure(message: string): Record<string, unknown> {
+  return { content: [{ type: 'text', text: message }], isError: true };
+}
+
+async function executeMcpTool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  let owner: McpOwner;
+  try {
+    owner = await resolveMcpOwner();
+  } catch {
+    return mcpToolFailure('The configured platform-owner account could not be resolved uniquely. Check the server-side owner allowlist and account identity index.');
+  }
+
+  try {
+    if (name === 'contribquest_get_status') {
+      const names = await secrets.listSecretNames().catch(() => [] as string[]);
+      const github = await githubSecretStatus();
+      return mcpToolSuccess({
+        application: 'ContribQuest',
+        account: { displayName: owner.name, email: owner.email },
+        platformRole: 'platform_owner',
+        deployment: { appId: 'contribquest-lygj1x', url: APP_BASE_URL },
+        integrations: {
+          githubAppOAuthConfigured: github.clientIdConfigured && github.clientSecretConfigured,
+          githubPatConfigured: names.includes(GITHUB_PAT_SECRET),
+          platformOwnerAllowlistConfigured: names.includes(PLATFORM_OWNER_SECRET),
+          mcpTokenConfigured: names.includes(MCP_TOKEN_SECRET),
+        },
+        availableTools: mcpToolDefinitions().map(tool => tool.name),
+      });
+    }
+
+    if (name === 'contribquest_list_bounties') {
+      const status = typeof args.status === 'string' ? args.status : 'open';
+      if (!['open', 'completed', 'all'].includes(status))
+        return mcpToolFailure('status must be open, completed, or all.');
+      const limit = args.limit === undefined ? 20 : args.limit;
+      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 50)
+        return mcpToolFailure('limit must be an integer between 1 and 50.');
+      const result = await db.list<Bounty & { id: string }>('bounties', { limit: 100 });
+      const bounties = result.items
+        .filter(item => status === 'all' || item.status === status)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, limit)
+        .map(mcpBountyView);
+      return mcpToolSuccess({ bounties, count: bounties.length, hasMore: Boolean(result.nextToken) });
+    }
+
+    if (name === 'contribquest_get_bounty') {
+      const id = textField(args.id, 160);
+      if (!id) return mcpToolFailure('A bounty ID is required.');
+      const [bounty] = await db.get<Bounty & { id: string }>('bounties', [id], { consistent: true });
+      if (!bounty) return mcpToolFailure('Bounty not found.');
+      return mcpToolSuccess({ bounty: mcpBountyView(bounty) });
+    }
+
+    if (name === 'contribquest_get_my_work') {
+      const [bountyResult, submissionResult, receivedResult, profileResult] = await Promise.all([
+        db.list<Bounty & { id: string }>(userBountiesTable(owner.userId), { limit: 50 }),
+        db.list<Contribution & { id: string }>(userSubmissionsTable(owner.userId), { limit: 50 }),
+        db.list<Contribution & { id: string }>(userReceivedTable(owner.userId), { limit: 50 }),
+        db.get<Profile>('profiles', [owner.userId], { consistent: true }),
+      ]);
+      const profile = profileResult[0] || { displayName: owner.name, xp: 0, acceptedCount: 0 };
+      return mcpToolSuccess({
+        profile: { displayName: profile.displayName, xp: profile.xp, acceptedCount: profile.acceptedCount },
+        myBounties: bountyResult.items.map(mcpBountyView),
+        mySubmissions: submissionResult.items.map(mcpContributionView),
+        receivedSubmissions: receivedResult.items.map(mcpContributionView),
+        hasMore: {
+          myBounties: Boolean(bountyResult.nextToken),
+          mySubmissions: Boolean(submissionResult.nextToken),
+          receivedSubmissions: Boolean(receivedResult.nextToken),
+        },
+      });
+    }
+
+    if (name === 'contribquest_list_workspaces') {
+      const result = await db.list<WorkspaceMembership>(userWorkspaceMembershipsTable(owner.userId), { limit: 50 });
+      return mcpToolSuccess({
+        workspaces: result.items.map(item => ({
+          id: item.workspaceId,
+          name: item.workspaceName,
+          role: item.role,
+          createdAt: item.createdAt,
+        })),
+        hasMore: Boolean(result.nextToken),
+      });
+    }
+
+    if (name === 'contribquest_create_bounty') {
+      if (!(await isPlatformOwner({ userId: owner.userId, email: owner.email })))
+        return mcpToolFailure('Only a configured platform owner can create a bounty through this integration.');
+      const outcome = await createBountyForUser(owner, args);
+      if (outcome.ok === false) return mcpToolFailure(outcome.message);
+      return mcpToolSuccess({
+        created: true,
+        bounty: mcpBountyView(outcome.bounty),
+        note: outcome.bounty.tier === 'paid'
+          ? 'This is a paid listing only. Payment processing and escrow are not provided by ContribQuest.'
+          : 'The community bounty is published and ready for eligible contributions.',
+      });
+    }
+
+    return mcpToolFailure('Unknown ContribQuest tool.');
+  } catch {
+    return mcpToolFailure('The ContribQuest tool call failed internally. No success is confirmed; inspect the app state before retrying any write.');
+  }
+}
+
+async function handleMcpRequest(ctx: { body: unknown; event: unknown }): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+  const origin = mcpHeaderValue(ctx.event, 'origin');
+  const cors = mcpCorsHeaders(origin);
+  if (!mcpOriginAllowed(origin))
+    return mcpHttpResponse(403, { error: 'Origin is not allowed.' }, cors);
+
+  const request = objectBody(ctx.body);
+  const requestId = typeof request.id === 'string' || typeof request.id === 'number' ? request.id : null;
+  if (request.jsonrpc !== '2.0' || typeof request.method !== 'string')
+    return mcpHttpResponse(400, { jsonrpc: '2.0', id: requestId, error: { code: -32600, message: 'Invalid JSON-RPC request.' } }, cors);
+
+  const auth = await validateMcpBearer(ctx.event);
+  if (auth.ok === false) {
+    const payload = { jsonrpc: '2.0', id: requestId, error: { code: -32001, message: auth.message } };
+    return mcpHttpResponse(auth.status, payload, {
+      ...cors,
+      'WWW-Authenticate': 'Bearer realm="ContribQuest MCP"',
+    });
+  }
+
+  if (typeof request.id !== 'string' && typeof request.id !== 'number') {
+    if (request.method.startsWith('notifications/')) return mcpHttpResponse(202, undefined, cors);
+    return mcpHttpResponse(400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'A request ID is required for this method.' } }, cors);
+  }
+
+  if (request.method === 'initialize') {
+    const params = objectBody(request.params);
+    const versions = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
+    const requested = typeof params.protocolVersion === 'string' ? params.protocolVersion : '';
+    const protocolVersion = versions.includes(requested) ? requested : '2025-11-25';
+    return mcpHttpResponse(200, {
+      jsonrpc: '2.0',
+      id: requestId,
+      result: {
+        protocolVersion,
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: 'contribquest-mcp', version: '1.0.0' },
+        instructions: 'ContribQuest provides bounded tools for the configured platform owner. Public listings can be read; private work is scoped to the allowlisted owner account. Creating a bounty publishes a listing and does not move money. Review each proposed write before calling it.',
+      },
+    }, cors);
+  }
+
+  if (request.method === 'ping')
+    return mcpHttpResponse(200, { jsonrpc: '2.0', id: requestId, result: {} }, cors);
+
+  if (request.method === 'tools/list')
+    return mcpHttpResponse(200, { jsonrpc: '2.0', id: requestId, result: { tools: mcpToolDefinitions() } }, cors);
+
+  if (request.method === 'tools/call') {
+    const params = objectBody(request.params);
+    if (typeof params.name !== 'string')
+      return mcpHttpResponse(200, { jsonrpc: '2.0', id: requestId, error: { code: -32602, message: 'Tool name is required.' } }, cors);
+    const args = objectBody(params.arguments);
+    const result = await executeMcpTool(params.name, args);
+    return mcpHttpResponse(200, { jsonrpc: '2.0', id: requestId, result }, cors);
+  }
+
+  return mcpHttpResponse(200, { jsonrpc: '2.0', id: requestId, error: { code: -32601, message: 'Method not found.' } }, cors);
+}
+
 export const handler = router({
+  'OPTIONS /api/mcp': [
+    async ctx => {
+      const origin = mcpHeaderValue(ctx.event, 'origin');
+      if (!mcpOriginAllowed(origin)) return mcpHttpResponse(403, { error: 'Origin is not allowed.' }, mcpCorsHeaders(''));
+      return mcpHttpResponse(204, undefined, mcpCorsHeaders(origin));
+    },
+  ],
+
+  'GET /api/mcp': [
+    async ctx => mcpHttpResponse(405, { error: 'Use POST for the ContribQuest Streamable HTTP MCP endpoint.' }, {
+      ...mcpCorsHeaders(mcpHeaderValue(ctx.event, 'origin')),
+      Allow: 'POST, OPTIONS',
+    }),
+  ],
+
+  'POST /api/mcp': [
+    async ctx => handleMcpRequest(ctx),
+  ],
+
   'GET /api/_healthcheck': [
     async () => json({ message: 'ContribQuest API online' }),
   ],
@@ -1470,8 +1997,7 @@ export const handler = router({
             if (!updated) throw new Error('github_email_refresh_failed');
             await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'consumed' }, if: { status: 'processing' } }], { patch: true });
             return githubCallbackRedirect('linked');
-          }
-          await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'failed' }, if: { status: 'processing' } }], { patch: true });
+          }          await db.tx.update('github_oauth_states', [{ id: state, record: { status: 'failed' }, if: { status: 'processing' } }], { patch: true });
           return githubCallbackRedirect('already_linked');
         }
         if (existingOwner && existingOwner.appUserId !== savedState.appUserId) {
@@ -1525,6 +2051,220 @@ export const handler = router({
     },
   ],
 
+  'GET /api/project-contributions': [
+    requireAuth(),
+    async ctx => {
+      const contributions = await db.list<ProjectContribution>(
+        userProjectContributionsTable(ctx.user!.userId),
+        { limit: 100 }
+      );
+      return json({
+        contributions: contributions.items.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        hasMore: Boolean(contributions.nextToken),
+      });
+    },
+  ],
+
+  'POST /api/project-contributions': [
+    requireAuth(),
+    async ctx => {
+      const body = objectBody(ctx.body);
+      const user = ctx.user!;
+      const projectName = textField(body.projectName, 120);
+      const workTitle = textField(body.workTitle, 160);
+      const description = textField(body.description, 4000);
+      const evidenceNote = textField(body.evidenceNote, 1000);
+      const workUrl = validUrl(body.workUrl, true);
+      const evidenceUrl = validUrl(body.evidenceUrl, true);
+      const workTypes = [
+        'requirements', 'architecture', 'research', 'software', 'testing',
+        'documentation', 'design', 'security', 'integration', 'operations',
+        'coordination', 'community', 'other',
+      ] as const;
+      const riskLevels = ['low', 'standard', 'high'] as const;
+      const workType = body.workType;
+      const riskLevel = body.riskLevel;
+      const acceptanceCriteria = Array.isArray(body.acceptanceCriteria)
+        ? body.acceptanceCriteria.map(value => typeof value === 'string' ? value.trim() : '')
+        : [];
+
+      if (!projectName || projectName.length < 3)
+        return error('Project name must contain at least 3 characters.', 400);
+      if (!workTitle || workTitle.length < 5)
+        return error('Work title must contain at least 5 characters.', 400);
+      if (!description || description.length < 30)
+        return error('Describe the delivered work in at least 30 characters.', 400);
+      if (!evidenceNote || evidenceNote.length < 15)
+        return error('Add an evidence note of at least 15 characters so the result can be checked.', 400);
+      if (!workTypes.includes(workType as typeof workTypes[number]))
+        return error('Choose a supported contribution type.', 400);
+      if (!riskLevels.includes(riskLevel as typeof riskLevels[number]))
+        return error('Choose a supported risk level.', 400);
+      if (workUrl === null || evidenceUrl === null)
+        return error('Work and evidence links must be valid HTTP or HTTPS URLs when provided.', 400);
+      if (acceptanceCriteria.length < 1 || acceptanceCriteria.length > 10 ||
+          acceptanceCriteria.some(item => item.length < 5 || item.length > 300) ||
+          new Set(acceptanceCriteria.map(item => item.toLocaleLowerCase())).size !== acceptanceCriteria.length)
+        return error('Provide 1–10 distinct acceptance criteria, each between 5 and 300 characters.', 400);
+
+      const createdAt = new Date().toISOString();
+      const id = newRecordId('pc');
+      const contribution: ProjectContribution = {
+        id,
+        contributorId: user.userId,
+        contributorName: contributorName(user),
+        projectName,
+        workTitle,
+        workType: workType as ProjectContribution['workType'],
+        description,
+        ...(workUrl ? { workUrl } : {}),
+        ...(evidenceUrl ? { evidenceUrl } : {}),
+        evidenceNote,
+        acceptanceCriteria,
+        criteriaChecks: acceptanceCriteria.map(() => false),
+        riskLevel: riskLevel as ProjectContribution['riskLevel'],
+        status: 'submitted',
+        verificationLevel: 'provisional',
+        xpAwarded: 0,
+        createdAt,
+        updatedAt: createdAt,
+      };
+
+      try {
+        const outcome = await db.transact([
+          db.tx.add(userProjectContributionsTable(user.userId), [contribution]),
+          db.tx.add('audit_events', [
+            appendAuditEvent(user.userId, 'project_contribution.recorded', 'project_contribution', id),
+          ]),
+        ]);
+        if (!outcome[0][0] || !outcome[1][0])
+          return error('The contribution record could not be saved atomically. Refresh and retry.', 503);
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        return error('The contribution record could not be confirmed. Refresh before retrying.', 503);
+      }
+      return json({ contribution }, 201);
+    },
+  ],
+
+  'POST /api/project-contributions/:id/verify': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      const body = objectBody(ctx.body);
+      const [contribution] = await db.get<ProjectContribution>(
+        userProjectContributionsTable(user.userId),
+        [ctx.params.id],
+        { consistent: true }
+      );
+      if (!contribution) return error('Contribution not found in your private work log.', 404);
+      if (contribution.status === 'accepted') {
+        return json({
+          verified: true,
+          duplicate: true,
+          status: contribution.status,
+          xpAwarded: contribution.xpAwarded,
+          message: 'This contribution was already verified. No duplicate XP was awarded.',
+        });
+      }
+      if (contribution.status !== 'submitted')
+        return error('This contribution is not available for verification.', 409);
+
+      const criteriaChecks = Array.isArray(body.criteriaChecks) ? body.criteriaChecks : [];
+      if (criteriaChecks.some(value => typeof value !== 'boolean') ||
+          criteriaChecks.length !== contribution.acceptanceCriteria.length)
+        return error('Record a true or false result for every acceptance criterion.', 400);
+      if (!criteriaChecks.every(Boolean))
+        return error('Self-verification requires every acceptance criterion to pass. Update the work or its evidence first.', 400);
+      const verificationNote = textField(body.verificationNote, 1000);
+      if (!verificationNote || verificationNote.length < 15)
+        return error('Add a verification rationale of at least 15 characters.', 400);
+
+      const reviewRequired = requiresIndependentProjectReview(contribution);
+      if (contribution.riskLevel !== 'low' || reviewRequired) {
+        return error(
+          'This record needs independent review or documented automated checks. Self-verification and XP are disabled for standard/high-risk or security-sensitive work.',
+          403
+        );
+      }
+
+      const now = new Date().toISOString();
+      const awardId = 'project_xp_' + contribution.id;
+      const patch = {
+        status: 'accepted' as const,
+        verificationLevel: 'self_verified' as const,
+        verificationNote,
+        criteriaChecks: [...criteriaChecks] as boolean[],
+        reviewerId: user.userId,
+        reviewerName: contributorName(user),
+        xpAwarded: 50,
+        updatedAt: now,
+        acceptedAt: now,
+      };
+      const [profile] = await db.get<Profile>('profiles', [user.userId], { consistent: true });
+      if (!profile) {
+        await db.tx.add('profiles', [{
+          id: user.userId,
+          displayName: contributorName(user),
+          xp: 0,
+          acceptedCount: 0,
+        }]);
+      }
+
+      try {
+        await db.transact([
+          db.tx.update(userProjectContributionsTable(user.userId), [{
+            id: contribution.id,
+            record: patch,
+            if: { status: 'submitted', contributorId: user.userId },
+          }], { patch: true }),
+          db.tx.add('xp_awards', [{
+            id: awardId,
+            userId: user.userId,
+            contributionId: contribution.id,
+            amount: 50,
+            ruleVersion: 'project-self-v1',
+            verificationLevel: 'self_verified',
+            createdAt: now,
+          }]),
+          db.tx.update('profiles', [{
+            id: user.userId,
+            record: { xp: increment(50) },
+          }], { patch: true }),
+          db.tx.add('audit_events', [
+            appendAuditEvent(user.userId, 'project_contribution.self_verified', 'project_contribution', contribution.id),
+          ]),
+        ]);
+      } catch (cause: unknown) {
+        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
+        const [saved] = await db.get<ProjectContribution>(
+          userProjectContributionsTable(user.userId),
+          [contribution.id],
+          { consistent: true }
+        );
+        if (saved?.status === 'accepted') {
+          return json({
+            verified: true,
+            duplicate: true,
+            status: saved.status,
+            xpAwarded: saved.xpAwarded,
+            message: 'This contribution is already verified. No duplicate XP was awarded.',
+          });
+        }
+        return error('Verification could not be confirmed. Refresh the work log before retrying.', 503);
+      }
+
+      return json({
+        verified: true,
+        duplicate: false,
+        status: 'accepted',
+        verificationLevel: 'self_verified',
+        xpAwarded: 50,
+        message: 'Low-risk contribution self-verified. 50 XP recorded.',
+      });
+    },
+  ],
+
   'GET /api/bounties': [
     async () => {
       const bounties = await readBounties();
@@ -1543,85 +2283,9 @@ export const handler = router({
   'POST /api/bounties': [
     requireAuth(),
     async ctx => {
-      const body = objectBody(ctx.body);
-      const title = textField(body.title, 100);
-      const description = textField(body.description, 2500);
-      const category = textField(body.category, 50);
-      const rawCriteria = Array.isArray(body.acceptanceCriteria) ? body.acceptanceCriteria : [];
-      const acceptanceCriteria = rawCriteria
-        .filter((value): value is string => typeof value === 'string')
-        .map(value => value.trim());
-      const reward = Number(body.reward);
-      const skills = Array.isArray(body.skills)
-        ? body.skills
-            .filter((value): value is string => typeof value === 'string')
-            .map(value => value.trim())
-            .filter(Boolean)
-            .slice(0, 12)
-        : [];
-      const repoUrl = validUrl(body.repoUrl, true);
-      const tier =
-        body.tier === 'paid'
-          ? 'paid'
-          : body.tier === 'community'
-            ? 'community'
-            : null;
-      const minAccepted =
-        body.minAccepted === undefined ? 2 : Number(body.minAccepted);
-      if (!title || title.length < 8)
-        return error('Use a clear bounty title of at least 8 characters.', 400);
-      if (!description || description.length < 20)
-        return error(
-          'Describe the expected work in at least 20 characters.',
-          400
-        );
-      if (!category) return error('Choose a bounty category.', 400);
-      if (acceptanceCriteria.length < 1 || acceptanceCriteria.length > 10)
-        return error('Provide between 1 and 10 acceptance criteria, one per line.', 400);
-      if (acceptanceCriteria.some(item => item.length < 5 || item.length > 240))
-        return error('Each acceptance criterion must be between 5 and 240 characters.', 400);
-      if (new Set(acceptanceCriteria.map(item => item.toLowerCase())).size !== acceptanceCriteria.length)
-        return error('Acceptance criteria must be unique. Remove duplicate checks.', 400);
-      if (!Number.isFinite(reward) || reward < 1 || reward > 100000)
-        return error('The offer must be between $1 and $100,000.', 400);
-      if (repoUrl === null)
-        return error('Repository URL must be a valid HTTP or HTTPS link.', 400);
-      if (!tier) return error('Choose community or paid bounty type.', 400);
-      if (!Number.isInteger(minAccepted) || minAccepted < 1 || minAccepted > 20)
-        return error(
-          'Minimum accepted contributions must be between 1 and 20.',
-          400
-        );
-      const user = ctx.user!;
-      const record = {
-        title,
-        description,
-        reward,
-        currency: 'USD',
-        category,
-        acceptanceCriteria,
-        skills,
-        repoUrl: repoUrl || undefined,
-        createdBy: user.userId,
-        createdByName: contributorName(user),
-        createdAt: new Date().toISOString(),
-        status: 'open' as const,
-        tier,
-        minAccepted: tier === 'paid' ? minAccepted : 0,
-      };
-      const id = newRecordId('b');
-      const persisted = { ...record, id };
-      try {
-        const bountyWrite = db.tx.add('bounties', [persisted]);
-        const bountyIndexWrite = db.tx.add(userBountiesTable(user.userId), [persisted]);
-        const [bountyIds, indexIds] = await db.transact([bountyWrite, bountyIndexWrite]);
-        if (!bountyIds[0] || !indexIds[0])
-          return error('The bounty could not be saved. Please retry.', 503);
-      } catch (cause: unknown) {
-        if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
-        return error('The bounty could not be saved atomically. Refresh and retry.', 503);
-      }
-      return json({ bounty: persisted }, 201);
+      const outcome = await createBountyForUser(ctx.user!, ctx.body);
+      if (outcome.ok === false) return error(outcome.message, outcome.status);
+      return json({ bounty: outcome.bounty }, 201);
     },
   ],
 
@@ -1997,7 +2661,8 @@ export const handler = router({
           status: 'accepted',
           xpAwarded: 50,
           message: 'Contribution accepted. 50 XP awarded.',
-        });      }
+        });
+      }
 
       const reviewPatch = {
         status,

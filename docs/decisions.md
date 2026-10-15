@@ -57,3 +57,12 @@ This log records decisions that affect the prototype's evolution. New decisions 
 **Reason:** A solo project must be able to progress without pretending that self-review is independent review, while security-sensitive operations still need stronger controls.
 
 **Consequence:** XP does not bypass release or security gates. XP awards must be idempotent, and 50 XP remains a prototype rule rather than a financial balance or professional credential.
+
+
+## D-008 — Project 0 work is recorded separately from community bounties
+
+**Decision:** Record founder/operator contributions in a private project-contribution ledger rather than forcing internal project work to become a community bounty. Each record links its project, deliverable, work item, evidence, acceptance criteria, and verification rationale.
+
+**Reason:** The Network is the first real project and needs to use its own contribution principles without pretending the founder is an unrelated external bounty applicant.
+
+**Consequence:** New records begin provisional and award no XP. The current self-verification route is restricted to low-risk, non-sensitive work, requires all criteria and a written rationale, stores a unique XP-award record, and atomically updates the contributor's XP without altering the community accepted-work gate. Higher-risk work remains provisional because independent-review and automated-check attestation flows are future work. The ledger is private per user; external GitHub URLs are evidence links, not automatic synchronization.

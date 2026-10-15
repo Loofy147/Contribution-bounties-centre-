@@ -8,214 +8,99 @@
       "acceptance criteria preview",
       "mixed contribution categories"
     ],
-    "description": "Verifies visitors can inspect a bounty's acceptance criteria before attempting work.",
+    "description": "Checks that visitors can browse examples and inspect the exact requirements before attempting work.",
     "steps": [
-      "Open the app",
+      "Open ContribQuest",
       "Choose Explore bounties",
       "Open a bounty card and inspect its acceptance criteria"
     ],
-    "expected": "The board shows the agreed checks on the bounty, so contributors can understand what the owner will review before submitting."
+    "expected": "The board shows scope, category, and review criteria without requiring sign-in."
   },
   {
-    "name": "Create a bounty with validated acceptance criteria",
+    "name": "Record and verify the founder's project contribution",
     "viewport": "desktop",
     "covers": [
-      "acceptance criteria input",
-      "1-to-10 unique criterion validation",
-      "authenticated bounty creation",
-      "persistence after refresh"
+      "private project contribution ledger",
+      "work item URL linkage",
+      "evidence notes and URLs",
+      "acceptance criteria snapshot",
+      "low-risk self-verification",
+      "exactly-once project XP",
+      "project contribution and profile refresh"
     ],
-    "description": "Verifies bounty creation permits one clear criterion for a narrow task, supports multiple criteria when needed, and retains a unique contract of 1–10 checks.",
+    "description": "Verifies the first consumer can record a real network task linked to inspectable work and get one XP award only after all criteria pass.",
     "steps": [
-      "Sign in",
-      "Choose Post a bounty",
-      "Enter a valid title, description, category and reward",
-      "Enter one clear acceptance criterion, or add more checks if the scope needs them",
-      "Publish and refresh the board"
+      "Sign in and open My contributions",
+      "Select Record work",
+      "Enter the Contribution Network project, title, work type, outcome description, a GitHub issue or pull request URL, evidence note, one clear criterion, and low risk",
+      "Save the contribution and refresh the page",
+      "Mark the criterion as met and submit a verification rationale",
+      "Refresh the project contribution card and profile progress"
     ],
-    "expected": "The bounty is published and its acceptance criteria remain visible. A bounty with one valid criterion is published; empty, too-short, duplicated, and over-limit criteria are rejected."
+    "expected": "The record persists with its work/evidence links and one criteria snapshot. Only after successful low-risk verification does it show Self-verified and 50 XP; retrying verification does not award another 50 XP or increment the community accepted-work gate."
   },
   {
-    "name": "Submit work against a snapshot of agreed criteria",
+    "name": "Keep higher-risk work provisional until stronger review",
+    "viewport": "desktop",
+    "covers": [
+      "risk-level validation",
+      "sensitive-work independent-review gate",
+      "no XP for provisional contribution",
+      "server-side author scoping"
+    ],
+    "description": "Checks self-verification is rejected for standard/high-risk or sensitive work and that one account cannot access another account's private ledger records.",
+    "steps": [
+      "Sign in and record a standard- or high-risk contribution with a work URL and evidence note",
+      "Inspect its status",
+      "Attempt the verify endpoint with every criterion marked true and a valid rationale",
+      "Repeat with a record titled around credentials, permissions, security, production, or payment work",
+      "While signed into a different account, request the first account's contribution ID"
+    ],
+    "expected": "The record remains provisional with no XP; sensitive or non-low-risk work requires stronger review, and cross-user reads return not found rather than disclosing private records."
+  },
+  {
+    "name": "Preserve bounty submission, review, revision and XP controls",
     "viewport": "desktop",
     "covers": [
       "contribution submission",
-      "acceptance criteria snapshot",
-      "written and linked evidence",
-      "My contributions persistence",
-      "user-scoped work indexes",
-      "bounded legacy work migration"
-    ],
-    "description": "Verifies submitted work is linked to the exact acceptance criteria agreed when the submission was made.",
-    "steps": [
-      "Sign in as a contributor who does not own an open community bounty",
-      "Open a live bounty and read the acceptance criteria",
-      "Submit a written explanation and optionally add an evidence link",
-      "Open My contributions and refresh",
-      "If the existing-work indexing notice appears, use Continue until indexing is complete."
-    ],
-    "expected": "The submission is pending review and retains the bounty's acceptance-criteria snapshot. Private per-user work views show the signed-in user's submissions and received reviews; existing records remain stored while bounded migration progresses."
-  },
-  {
-    "name": "Request changes, revise, and accept only the compliant version",
-    "viewport": "desktop",
-    "covers": [
-      "owner-only review rationale",
-      "changes-requested transition",
-      "contributor-only resubmission endpoint",
-      "duplicate resubmission prevention",
-      "revision history",
-      "visible prior review history",
-      "acceptance checklist",
-      "single XP award"
-    ],
-    "description": "Verifies the changes-requested cycle can produce a new submission version without losing prior review evidence or awarding XP twice.",
-    "steps": [
-      "Owner requests changes and records which criteria are not yet met plus a written rationale",
-      "Original contributor opens My contributions and selects Revise & resubmit",
-      "Contributor updates the explanation or evidence and resubmits",
-      "Owner reviews the pending new version, sees the prior review event, checks every criterion, writes a rationale, and accepts",
-      "Refresh both views"
-    ],
-    "expected": "Version 2 returns to pending, revision 1 and the earlier review stay in history, a second independent submission is blocked while changes are requested, final acceptance records the passing checklist, and the contributor gains exactly 50 XP once."
-  },
-  {
-    "name": "Reject unauthorized and incomplete acceptance transitions",
-    "viewport": "mobile",
-    "covers": [
-      "criteria validation",
-      "review rationale validation",
-      "server-side acceptance checklist",
-      "submission ownership",
-      "resubmission status guard",
+      "criteria snapshot",
+      "owner-only review",
+      "changes-requested revision history",
+      "single community XP award",
       "duplicate submission guard"
     ],
-    "description": "Verifies invalid acceptance data and unauthorized, duplicate, or out-of-order resubmissions are blocked by the backend.",
+    "description": "Protects the existing community bounty workflow as the project contribution ledger is added.",
     "steps": [
-      "Publish a bounty with one valid criterion, then attempt empty, too-short, duplicated, and more-than-ten criterion lists",
-      "Attempt to accept work with a criterion still marked false or a rationale shorter than 15 characters",
-      "As someone other than the submitter, attempt to resubmit a changes-requested contribution",
-      "Try to create a second submission for a bounty where the existing submission has changes requested",
-      "Try to resubmit a contribution that is not in changes-requested status"
+      "Use separate owner and contributor accounts",
+      "Submit written work to an open community bounty",
+      "Have the owner request changes with rationale",
+      "Resubmit as the original contributor",
+      "Pass each criterion and accept the final version",
+      "Refresh both accounts and attempt a repeated review"
     ],
-    "expected": "One clear criterion is allowed; empty, too-short, duplicated, or more-than-ten criteria are rejected. Review and ownership guards remain enforced, and invalid requests award no XP."
+    "expected": "The revision and review history remain visible; only the valid final acceptance awards 50 community XP once, with ownership checks and submission guards intact."
   },
   {
-    "name": "Review account roles and GitHub connection prerequisites",
-    "viewport": "desktop",
-    "covers": [
-      "existing account identity remains canonical",
-      "server-supplied role summary",
-      "workspace membership visibility",
-      "GitHub OAuth configuration status",
-      "exact GitHub callback URL",
-      "owner role cannot be self-claimed"
-    ],
-    "description": "Verifies account settings explain the account, role boundaries and GitHub setup without claiming a connection before credentials are configured.",
-    "steps": [
-      "Sign in with the existing ContribQuest account",
-      "Open Account & integrations",
-      "Inspect the account ID and current role",
-      "Inspect the GitHub configuration status and exact callback URL",
-      "Confirm repository installation is separate from identity linking and owner access requires server-side allowlisting"
-    ],
-    "expected": "The existing account remains canonical; roles come from server state, missing GitHub secrets appear as not configured, the callback URL is displayed exactly, and the interface never claims GitHub is linked or allows self-promotion to platform owner."
-  },
-  {
-    "name": "Explain a rejected GitHub callback URL",
-    "viewport": "desktop",
-    "covers": [
-      "GitHub OAuth callback error classification",
-      "actionable connection failure message",
-      "callback URL exact-match configuration"
-    ],
-    "description": "Verifies a GitHub redirect URI mismatch returns a specific safe message rather than a generic connection failure.",
-    "steps": [
-      "Open https://contribquest-lygj1x.v2.appdeploy.ai/api/integrations/github/callback?error=redirect_uri_mismatch",
-      "Allow the callback to redirect back to ContribQuest",
-      "Read the GitHub connection status message"
-    ],
-    "expected": "ContribQuest explains that GitHub rejected the callback URL and shows the exact user-authorization callback URL to configure."
-  },
-  {
-    "name": "Display verified GitHub email separately from app email",
-    "viewport": "desktop",
-    "covers": [
-      "GitHub verified secondary email retrieval",
-      "distinct app and GitHub email addresses",
-      "email permission failure guidance",
-      "canonical app sign-in identity remains unchanged"
-    ],
-    "description": "Verifies the linked GitHub identity can expose its own verified email addresses without requiring them to match the ContribQuest sign-in email.",
-    "steps": [
-      "Configure the GitHub App User permission Email addresses: Read",
-      "Sign in to ContribQuest with the existing account and open Account & integrations",
-      "Connect or reconnect the GitHub identity and authorize the app",
-      "Inspect the verified GitHub email(s) and ContribQuest sign-in email in the linked identity panel"
-    ],
-    "expected": "The linked panel displays GitHub-verified addresses separately from the canonical ContribQuest sign-in email. If email permission is missing, the UI explains the exact permission to enable and the app does not claim that an unverified address is verified."
-  },
-  {
-    "name": "Select the intended GitHub account when linking",
+    "name": "Check account and GitHub integration safety",
     "viewport": "mobile",
     "covers": [
-      "GitHub username selection",
-      "separate application and GitHub emails",
-      "authorization account selection prompt",
-      "identity linking stays bound to authenticated app user"
+      "canonical app identity",
+      "workspace roles",
+      "GitHub configuration status",
+      "OAuth callback validation",
+      "device authorization",
+      "encrypted GitHub PAT repository allowlist",
+      "confirmed repository writes"
     ],
-    "description": "Verifies users can target a specific GitHub username or request an account chooser without needing matching email addresses.",
+    "description": "Retains mobile and desktop safeguards for account identity, GitHub linking, and owner-gated repository operations.",
     "steps": [
-      "Sign in to the existing ContribQuest account and open Account & integrations",
-      "Enter Loofy147 in the GitHub username to connect field",
-      "Select Connect GitHub identity",
-      "Inspect the GitHub authorization page and verify it targets the requested GitHub username",
-      "Return to ContribQuest after authorizing the account"
+      "Sign in and open Account & integrations",
+      "Inspect app identity and workspace role",
+      "Inspect GitHub setup state and callback URL",
+      "Review the device-code flow and verified-email status if configured",
+      "As platform owner, verify PAT repository access and read a file",
+      "Attempt an unconfigured repository or unauthorized write"
     ],
-    "expected": "GitHub authorization is directed to the requested username; if the field is blank, GitHub is asked to show an account selector. The app account email remains unchanged and the linked identity is taken from GitHub's verified user response."
-  },
-  {
-    "name": "Connect GitHub through device authorization without callback redirects",
-    "viewport": "mobile",
-    "covers": [
-      "GitHub device authorization fallback",
-      "short-lived user verification code",
-      "identity bound to initiating ContribQuest user",
-      "pending authorization polling",
-      "device code expiry and cancellation"
-    ],
-    "description": "Verifies a mobile user can authorize GitHub through the device verification page and return to ContribQuest without relying on a callback redirect.",
-    "steps": [
-      "Enable Device Flow in the ContribQuest-WorkLink GitHub App settings",
-      "Sign in to ContribQuest and open Account & integrations",
-      "Select Use device code instead",
-      "Open the GitHub device authorization page and enter the displayed user code",
-      "Authorize the GitHub account that owns the working repositories",
-      "Return to ContribQuest and wait for automatic verification"
-    ],
-    "expected": "ContribQuest polls at GitHub's required interval, then displays the linked GitHub identity and verified email status. The temporary device code is not stored in plaintext, and no GitHub access token is stored in normal database records."
-  },
-  {
-    "name": "Verify and use the encrypted GitHub PAT through ContribQuest",
-    "viewport": "desktop",
-    "covers": [
-      "GitHub PAT is stored as a backend secret",
-      "PAT verification without returning credentials",
-      "repository access to both configured working repos",
-      "owner-only repository file reading",
-      "reviewed file commits through GitHub API",
-      "repository allowlist enforcement"
-    ],
-    "description": "Verifies the owner can validate the backend PAT against GitHub and the two configured repositories, read a text file, and commit a confirmed edit without exposing the token.",
-    "steps": [
-      "Sign in with the configured platform-owner ContribQuest account",
-      "Open Account & integrations and select Verify PAT and repository access",
-      "Inspect the GitHub login and access result for each allowed repository",
-      "Select one allowed repository, enter README.md and choose Read file from GitHub",
-      "Edit a harmless test line and enter a clear commit message",
-      "Confirm Commit file change and inspect the returned commit link",
-      "Attempt to select an unconfigured repository and verify the backend rejects it"
-    ],
-    "expected": "The backend verifies the PAT without returning its value, reports access for both allowed repos, reads a file, and commits only to one allowed repository after confirmation. Non-owner requests and repos outside the two-repository allowlist are rejected."
+    "expected": "The app never claims an unconfigured identity is linked, token values stay server-side, repository access is restricted to configured repositories, and file writes remain owner-gated and explicit."
   }
 ]

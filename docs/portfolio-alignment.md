@@ -11,7 +11,7 @@
 - **Application prototype:** this repository, [Contribution Bounties Centre](https://github.com/Loofy147/Contribution-bounties-centre-)
 - **Live prototype:** https://contribquest-lygj1x.v2.appdeploy.ai/
 
-The Contribution Network itself is Project 0 and the first real project. Its founder is the first consumer and contributes requirements, architecture, research, implementation, testing, documentation, security analysis, integration, and maintenance. These activities are eligible to be recorded as contributions. The current application does not yet implement the full founder self-contribution XP flow or verification-level labels; until then, use GitHub issues/PRs and inspectable evidence, and do not claim the app awarded XP.
+The Contribution Network itself is Project 0 and the first real project. Its founder is the first consumer and contributes requirements, architecture, research, implementation, testing, documentation, security analysis, integration, and maintenance. These activities are eligible to be recorded as contributions. The app now includes a private Project 0 ledger for recording this work, linking work items and evidence, and preserving acceptance criteria. Low-risk, non-sensitive records can be self-verified for 50 XP under an idempotent award rule. Standard/high-risk and sensitive records remain provisional; independent-review and automated-check attestation workflows are not yet implemented.
 
 ## Current working boundary and deferred handover
 
@@ -51,3 +51,10 @@ When policy changes, update in this order:
 6. Re-fetch the committed files and distinguish repository-level/static verification from live runtime verification.
 
 The charter defines intended behavior; application code defines current behavior. Where they differ, report the gap explicitly and track implementation in the roadmap. Neither a document nor a UI claim is proof that the workflow works.
+
+
+## Project contribution ledger status (2026-10-15)
+
+The live app supports separate Project 0 work records with a work title/type, project, outcome description, optional work URL, optional evidence URL, required evidence note, acceptance criteria, risk level, and verification status. Records are private to their contributor. The creation and verification APIs validate inputs server-side and write an audit event. Self-verification uses a stable XP-award record and does not modify the community accepted-contribution count.
+
+Still open: independent reviewers cannot yet action these project records inside the app, automated test results are not yet ingested or cryptographically attested, and GitHub issue/PR status is not synchronized. Do not mark higher-risk records accepted or award them XP merely because a link exists.
