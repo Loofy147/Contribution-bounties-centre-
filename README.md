@@ -1,6 +1,6 @@
 # Contributions Centre
 
-Contributions Centre is the initial application prototype for the [Contribution Network](https://github.com/Loofy147/contribution-network), which is its own first real project and first consumer use case. **ContribQuest** is the current live prototype. The founder's useful work is eligible to be recorded as a contribution; the current app does not yet implement the complete founder self-contribution XP and verification-level workflow.
+Contributions Centre is the application prototype for the [Contribution Network](https://github.com/Loofy147/contribution-network), which is its own first real project and first consumer use case. **ContribQuest** is the live prototype. The app now includes a private Project 0 contribution ledger for recording founder/operator work, linking it to work items and evidence, and retaining acceptance criteria and verification rationale. Low-risk, non-sensitive work may be self-verified for 50 XP; provisional or higher-risk work earns no XP through this flow.
 
 - **Live prototype:** https://contribquest-lygj1x.v2.appdeploy.ai/
 - **Canonical repository:** https://github.com/Loofy147/Contribution-bounties-centre-
@@ -42,14 +42,14 @@ The repository contract test uses Node's built-in test runner and checks the QA 
 
 Run it with: node --test tests/repository-contract.test.mjs
 
-The AppDeploy test manifest at tests/tests.json describes five browser scenarios. These scenarios still require live execution with separate contributor and bounty-owner accounts before the workflow can be considered end-to-end verified.
+The AppDeploy test manifest at tests/tests.json describes five consolidated browser scenarios. These scenarios still require live execution with separate accounts and saved work records before the workflow can be considered end-to-end verified.
 
 ## Initial verification priorities
 
 1. Reproduce the deployed build outside the platform by resolving and documenting the AppDeploy SDK/client dependencies.
 2. Run the five browser scenarios against the deployed application using independent owner and contributor identities.
 3. Verify authorization, state transitions, review history, and exactly-once XP behavior in real persisted data.
-4. Implement and test the charter's founder-contribution path with explicit verification levels; until then, track internal work through GitHub issues/PRs and evidence rather than implying the app has awarded XP.
+4. Exercise the Project 0 contribution ledger against real founder work, including URL linkage, evidence quality, risk gates, and exactly-once XP behavior. Standard/high-risk and sensitive work remain provisional until a real independent-review or automated-check workflow is implemented; continue using GitHub issues/PRs and inspectable evidence for that work.
 5. Address evidence uploads, notifications, payout controls, abuse resistance, and operational monitoring before making production-readiness claims.
 
 ## License
