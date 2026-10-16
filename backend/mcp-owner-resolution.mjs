@@ -12,7 +12,9 @@ export function requireUniqueMcpOwner(candidates) {
       candidate.userId.trim() === '' ||
       typeof candidate.email !== 'string' ||
       candidate.email.trim() === ''
-    ) continue;
+    ) {
+      throw new Error('mcp_owner_missing_or_ambiguous');
+    }
     matches.set(candidate.userId, {
       userId: candidate.userId,
       email: candidate.email,
