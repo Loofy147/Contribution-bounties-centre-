@@ -42,5 +42,8 @@ jobs:
       - name: Build frontend with AppDeploy client kept external
         run: APPDEPLOY_LOCAL_BUILD=true npm run build
 
+      - name: Smoke-test built frontend artifact
+        run: node scripts/smoke-build.mjs
+
       - name: Validate repository contract
         run: npm run test:contract
