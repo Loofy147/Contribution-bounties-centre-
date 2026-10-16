@@ -661,10 +661,30 @@ async function seedSamples() {
     samples.map(item => ({ ...item }))
   );
 }
-async function readBounties() {
+type PublicBounty = Omit<Bounty, 'createdBy'> & { id: string };
+
+async function readBounties(): Promise<PublicBounty[]> {
   await seedSamples();
-  const result = await db.list<Bounty>('bounties', { limit: 100 });
-  return result.items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const result = await db.list<Bounty & { id: string }>('bounties', { limit: 100 });
+  return result.items
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map(item => ({
+      id: item.id,
+      title: item.title,
+      description: item.description,
+      reward: item.reward,
+      currency: item.currency,
+      category: item.category,
+      skills: item.skills,
+      ...(item.repoUrl ? { repoUrl: item.repoUrl } : {}),
+      createdByName: item.createdByName,
+      createdAt: item.createdAt,
+      status: item.status,
+      tier: item.tier,
+      minAccepted: item.minAccepted,
+      acceptanceCriteria: item.acceptanceCriteria ?? [],
+      sample: Boolean(item.sample),
+    }));
 }
 
 type CreateBountyOutcome =
@@ -2275,7 +2295,14 @@ export const handler = router({
   'GET /api/leaderboard': [
     async () => {
       const result = await db.list<Profile>('profiles', { limit: 100 });
-      const profiles = result.items.sort((a, b) => b.xp - a.xp).slice(0, 25);
+      const profiles = result.items
+        .map(profile => ({
+          displayName: profile.displayName,
+          xp: profile.xp,
+          acceptedCount: profile.acceptedCount,
+        }))
+        .sort((a, b) => b.xp - a.xp)
+        .slice(0, 25);
       return json({ profiles });
     },
   ],
