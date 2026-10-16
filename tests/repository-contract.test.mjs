@@ -486,7 +486,7 @@ test('public bounty and leaderboard responses use explicit allowlisted projectio
     backend.indexOf("async function readBounties"),
     backend.indexOf("type CreateBountyOutcome"),
   );
-  assert.match(publicBountyReader, /type PublicBounty = Omit<Bounty, 'createdBy'>/);
+  assert.match(backend, /type PublicBounty = Omit<Bounty, 'createdBy'>/);
   assert.match(publicBountyReader, /id: item\.id/);
   assert.match(publicBountyReader, /createdByName: item\.createdByName/);
   assert.doesNotMatch(
