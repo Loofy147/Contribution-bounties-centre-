@@ -13,6 +13,10 @@ const analytics = await readFile(new URL('../src/analytics.ts', import.meta.url)
 const packageManifest = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8'),
 );
+const tsconfig = JSON.parse(await readFile(new URL('../tsconfig.json', import.meta.url), 'utf8'));
+const viteConfig = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+const appdeployClientTypes = await readFile(new URL('../types/appdeploy-client.d.ts', import.meta.url), 'utf8');
+const buildSmoke = await readFile(new URL('../scripts/smoke-build.mjs', import.meta.url), 'utf8');
 const workflow = await readFile(
   new URL('../.github/workflows/repository-contract.yml', import.meta.url),
   'utf8',
@@ -265,6 +269,22 @@ test('package exposes a dependency-free contract test command', () => {
     packageManifest.scripts['test:contract'],
     'node --test tests/repository-contract.test.mjs',
   );
+});
+
+test('clean-build contract preserves the AppDeploy injected client boundary', () => {
+  assert.equal(packageManifest.dependencies['@appdeploy/client'], undefined);
+  assert.equal(packageManifest.dependencies['@appdeploy/sdk'], undefined);
+  assert.deepEqual(tsconfig.include, ['src', 'types']);
+  assert.match(viteConfig, /const localBuild = process\.env\.APPDEPLOY_LOCAL_BUILD === 'true'/);
+  assert.match(viteConfig, /external: localBuild \? \['@appdeploy\/client'\] : \[\]/);
+  assert.match(appdeployClientTypes, /declare module '@appdeploy\/client'/);
+  assert.match(appdeployClientTypes, /getUser\(\): Promise<AuthUser \| null>/);
+  assert.match(workflow, /npm install --no-audit --no-fund/);
+  assert.match(workflow, /npx tsc --noEmit/);
+  assert.match(workflow, /APPDEPLOY_LOCAL_BUILD=true npm run build/);
+  assert.match(workflow, /node scripts\/smoke-build\.mjs/);
+  assert.match(buildSmoke, /@appdeploy\/client/);
+  assert.match(buildSmoke, /index\.html/);
 });
 
 test('CI workflow has least privilege, immutable actions, and bounded execution', () => {

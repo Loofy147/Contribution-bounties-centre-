@@ -33,5 +33,17 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Type-check frontend and AppDeploy client declarations
+        run: npx tsc --noEmit
+
+      - name: Build frontend with AppDeploy client kept external
+        run: APPDEPLOY_LOCAL_BUILD=true npm run build
+
+      - name: Smoke-test built frontend artifact
+        run: node scripts/smoke-build.mjs
+
       - name: Validate repository contract
         run: npm run test:contract
