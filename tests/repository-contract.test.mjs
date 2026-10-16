@@ -16,6 +16,7 @@ const packageManifest = JSON.parse(
 const tsconfig = JSON.parse(await readFile(new URL('../tsconfig.json', import.meta.url), 'utf8'));
 const viteConfig = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
 const appdeployClientTypes = await readFile(new URL('../types/appdeploy-client.d.ts', import.meta.url), 'utf8');
+const buildSmoke = await readFile(new URL('../scripts/smoke-build.mjs', import.meta.url), 'utf8');
 const workflow = await readFile(
   new URL('../.github/workflows/repository-contract.yml', import.meta.url),
   'utf8',
@@ -281,6 +282,9 @@ test('clean-build contract preserves the AppDeploy injected client boundary', ()
   assert.match(workflow, /npm install --no-audit --no-fund/);
   assert.match(workflow, /npx tsc --noEmit/);
   assert.match(workflow, /APPDEPLOY_LOCAL_BUILD=true npm run build/);
+  assert.match(workflow, /node scripts\/smoke-build\.mjs/);
+  assert.match(buildSmoke, /@appdeploy\/client/);
+  assert.match(buildSmoke, /dist\/index\.html/);
 });
 
 test('CI workflow has least privilege, immutable actions, and bounded execution', () => {
