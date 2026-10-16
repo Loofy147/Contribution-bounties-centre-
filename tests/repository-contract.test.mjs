@@ -422,7 +422,7 @@ test('workspace and GitHub integration mutations enforce actor role and object b
   assert.match(callback, /savedState\.purpose !== 'identity_link'/);
   assert.match(callback, /new Date\(savedState\.expiresAt\)\.getTime\(\) <= Date\.now\(\)/);
   assert.match(callback, /if: \{ status: 'pending', appUserId: savedState\.appUserId \}/);
-  assert.match(callback, /const existingOwner =/);
+  assert.match(callback, /const \[existingOwner\] = await db\.get<GitHubIdentityOwner>/);
 
   const disconnect = routeSourceForTest('POST /api/integrations/github/disconnect');
   assert.match(disconnect, /github_identity_links', \[user\.userId\]/);
