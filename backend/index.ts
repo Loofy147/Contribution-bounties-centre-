@@ -8,6 +8,7 @@ import {
   isAppDatabaseError,
   secrets,
 } from '@appdeploy/sdk';
+import { requireUniqueMcpOwner } from './mcp-owner-resolution.mjs';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 
 type Bounty = {
@@ -776,14 +777,12 @@ type McpOwner = { userId: string; email: string; name: string };
 
 async function resolveMcpOwner(): Promise<McpOwner> {
   const configuredOwners = await configuredOwnerEmails();
-  const matches = new Map<string, { userId: string; email: string }>();
+  const candidates: { userId: string; email: string }[] = [];
   for (const email of configuredOwners) {
     const [index] = await db.get<AccountEmailIndex>('account_email_index', [emailKey(email)], { consistent: true });
-    if (index?.userId) matches.set(index.userId, { userId: index.userId, email });
+    if (index?.userId) candidates.push({ userId: index.userId, email });
   }
-  if (matches.size !== 1) throw new Error('mcp_owner_missing_or_ambiguous');
-
-  const selected = [...matches.values()][0];
+  const selected = requireUniqueMcpOwner(candidates);
   if (!(await isPlatformOwner({ userId: selected.userId, email: selected.email })))
     throw new Error('mcp_platform_owner_not_configured');
 
