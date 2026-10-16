@@ -43,10 +43,11 @@ test('MCP owner selection fails closed unless exactly one identity remains', () 
   );
   assert.throws(
     () => requireUniqueMcpOwner([
-      { userId: '  ', email: 'owner@example.test' },
+      { userId: 'owner-a', email: 'owner@example.test' },
+      { userId: '  ', email: 'malformed@example.test' },
     ]),
     /mcp_owner_missing_or_ambiguous/,
-    'malformed identity values must not count as a valid owner',
+    'a malformed candidate must not be ignored in favor of another account',
   );
   assert.deepEqual(
     requireUniqueMcpOwner([
