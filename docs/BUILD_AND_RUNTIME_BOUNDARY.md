@@ -6,7 +6,8 @@ The repository CI validates three things from a clean checkout:
 
 1. TypeScript checks the React frontend and the type-only declaration for the injected AppDeploy client.
 2. Vite builds the frontend with `@appdeploy/client` externalized for this **local validation build only**.
-3. The dependency-free source-contract suite checks route, ownership, role, and runtime-boundary invariants.
+3. The artifact smoke test confirms `dist/index.html` and its referenced assets exist and that the generated JavaScript still references the injected AppDeploy client.
+4. The dependency-free source-contract suite checks route, ownership, role, and runtime-boundary invariants.
 
 The local build is not a replacement for the AppDeploy deployment build. The generated local bundle retains the AppDeploy client import and is not intended to be served independently.
 
