@@ -479,3 +479,40 @@ function routeSourceForTest(name) {
     declarations[index + 1]?.index ?? backend.length,
   );
 }
+
+
+test('public bounty and leaderboard responses use explicit allowlisted projections', () => {
+  const publicBountyReader = backend.slice(
+    backend.indexOf("async function readBounties"),
+    backend.indexOf("type CreateBountyOutcome"),
+  );
+  assert.match(publicBountyReader, /type PublicBounty = Omit<Bounty, 'createdBy'>/);
+  assert.match(publicBountyReader, /id: item\.id/);
+  assert.match(publicBountyReader, /createdByName: item\.createdByName/);
+  assert.doesNotMatch(
+    publicBountyReader,
+    /\bcreatedBy\s*:/,
+    'public bounty payload must not expose the internal creator account ID',
+  );
+
+  const leaderboard = routeSourceForTest('GET /api/leaderboard');
+  assert.match(leaderboard, /map\(profile => \(\{/);
+  assert.match(leaderboard, /displayName: profile\.displayName/);
+  assert.match(leaderboard, /xp: profile\.xp/);
+  assert.match(leaderboard, /acceptedCount: profile\.acceptedCount/);
+  assert.doesNotMatch(
+    leaderboard,
+    /profiles:\s*result\.items/,
+    'public leaderboard must not serialize raw database records',
+  );
+  assert.doesNotMatch(
+    frontend,
+    /user\?\.userId === item\.createdBy/,
+    'public bounty cards must not depend on a leaked internal creator ID',
+  );
+  assert.match(
+    frontend,
+    /work\.myBounties\.some\(ownedBounty => ownedBounty\.id === item\.id\)/,
+    'owner-only UI affordances should derive from the signed-in user’s private work view',
+  );
+});
