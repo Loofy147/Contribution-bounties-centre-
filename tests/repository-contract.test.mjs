@@ -267,3 +267,252 @@ test('secret scanning installs a pinned CLI without account lookup or report upl
     );
   }
 });
+
+
+test('every API route has an explicit public, bearer, session, or one-time-state boundary', () => {
+  const routePattern = /^[ \t]{2}'((?:OPTIONS|GET|POST|PUT|PATCH|DELETE) \/api\/[^']+)': \[/gm;
+  const declarations = [...backend.matchAll(routePattern)];
+  const declaredRoutes = declarations.map((match) => match[1]);
+  const expectedRoutes = [
+    'OPTIONS /api/mcp',
+    'GET /api/mcp',
+    'POST /api/mcp',
+    'GET /api/_healthcheck',
+    'GET /api/account/security',
+    'GET /api/workspaces',
+    'POST /api/workspaces',
+    'GET /api/workspaces/:workspaceId/members',
+    'POST /api/access/workspaces/:workspaceId/members',
+    'DELETE /api/access/workspaces/:workspaceId/members/:userId',
+    'POST /api/integrations/github/pat/verify',
+    'POST /api/integrations/github/pat/file/read',
+    'POST /api/integrations/github/pat/file/write',
+    'POST /api/integrations/github/start',
+    'POST /api/integrations/github/device/start',
+    'POST /api/integrations/github/device/poll',
+    'GET /api/integrations/github/callback',
+    'POST /api/integrations/github/disconnect',
+    'GET /api/project-contributions',
+    'POST /api/project-contributions',
+    'POST /api/project-contributions/:id/verify',
+    'GET /api/bounties',
+    'GET /api/leaderboard',
+    'POST /api/bounties',
+    'POST /api/bounties/:id/submit',
+    'GET /api/my-work',
+    'POST /api/contributions/:id/resubmit',
+    'POST /api/contributions/:id/review',
+  ];
+  assert.deepEqual(
+    [...declaredRoutes].sort(),
+    [...expectedRoutes].sort(),
+    'every API route, including newly added routes, must be classified in this contract',
+  );
+
+  const routeSource = (name) => {
+    const index = declarations.findIndex((match) => match[1] === name);
+    assert.notEqual(index, -1, 'missing declared route: ' + name);
+    return backend.slice(
+      declarations[index].index,
+      declarations[index + 1]?.index ?? backend.length,
+    );
+  };
+
+  const sessionProtected = [
+    'GET /api/account/security',
+    'GET /api/workspaces',
+    'POST /api/workspaces',
+    'GET /api/workspaces/:workspaceId/members',
+    'POST /api/access/workspaces/:workspaceId/members',
+    'DELETE /api/access/workspaces/:workspaceId/members/:userId',
+    'POST /api/integrations/github/pat/verify',
+    'POST /api/integrations/github/pat/file/read',
+    'POST /api/integrations/github/pat/file/write',
+    'POST /api/integrations/github/start',
+    'POST /api/integrations/github/device/start',
+    'POST /api/integrations/github/device/poll',
+    'POST /api/integrations/github/disconnect',
+    'GET /api/project-contributions',
+    'POST /api/project-contributions',
+    'POST /api/project-contributions/:id/verify',
+    'POST /api/bounties',
+    'POST /api/bounties/:id/submit',
+    'GET /api/my-work',
+    'POST /api/contributions/:id/resubmit',
+    'POST /api/contributions/:id/review',
+  ];
+  for (const route of sessionProtected) {
+    assert.match(
+      routeSource(route),
+      /requireAuth\(\)/,
+      route + ' must require an authenticated app session',
+    );
+  }
+
+  for (const route of [
+    'OPTIONS /api/mcp',
+    'GET /api/mcp',
+    'GET /api/_healthcheck',
+    'GET /api/bounties',
+    'GET /api/leaderboard',
+  ]) {
+    assert.doesNotMatch(
+      routeSource(route),
+      /requireAuth\(\)/,
+      route + ' is intentionally public and must stay limited to public/preflight data',
+    );
+  }
+  assert.match(routeSource('OPTIONS /api/mcp'), /mcpOriginAllowed\(origin\)/);
+  assert.match(routeSource('GET /api/mcp'), /mcpHttpResponse\(405/);
+  assert.match(routeSource('GET /api/_healthcheck'), /ContribQuest API online/);
+  assert.match(routeSource('GET /api/bounties'), /readBounties\(\)/);
+  assert.match(routeSource('GET /api/leaderboard'), /db\.list<Profile>\('profiles'/);
+
+  const mcpHandler = backend.slice(
+    backend.indexOf('async function handleMcpRequest'),
+    backend.indexOf('export const handler'),
+  );
+  assert.match(mcpHandler, /if \(!mcpOriginAllowed\(origin\)\)/);
+  assert.match(mcpHandler, /const auth = await validateMcpBearer\(ctx\.event\)/);
+  assert.match(mcpHandler, /if \(auth\.ok === false\)/);
+  assert.match(mcpHandler, /request\.method === 'tools\/call'/);
+});
+
+test('workspace and GitHub integration mutations enforce actor role and object boundaries', () => {
+  assert.match(routeSourceForTest("POST /api/workspaces"), /isPlatformOwner\(user\)/);
+  assert.match(routeSourceForTest("GET /api/workspaces/:workspaceId/members"), /canManageWorkspace\(ctx\.user!, workspaceId\)/);
+
+  const addMember = routeSourceForTest('POST /api/access/workspaces/:workspaceId/members');
+  assert.match(addMember, /isPlatformOwner\(user\)/);
+  assert.match(addMember, /canManageWorkspace\(user, workspaceId\)/);
+  assert.match(addMember, /role === 'workspace_admin' && !owner/);
+  assert.match(addMember, /accountIndex\.userId/);
+
+  const removeMember = routeSourceForTest('DELETE /api/access/workspaces/:workspaceId/members/:userId');
+  assert.match(removeMember, /canManageWorkspace\(user, workspaceId\)/);
+  assert.match(removeMember, /membership\.role === 'workspace_admin' && !owner/);
+  assert.match(removeMember, /A workspace must retain at least one administrator/);
+
+  for (const route of [
+    'POST /api/integrations/github/pat/verify',
+    'POST /api/integrations/github/pat/file/read',
+    'POST /api/integrations/github/pat/file/write',
+  ]) {
+    assert.match(routeSourceForTest(route), /isPlatformOwner\(ctx\.user!\)/, route + ' must be owner-only');
+  }
+  assert.match(routeSourceForTest('POST /api/integrations/github/pat/file/read'), /isGitHubPatRepository\(repository\)/);
+  assert.match(routeSourceForTest('POST /api/integrations/github/pat/file/write'), /isGitHubPatRepository\(repository\)/);
+
+  const startOAuth = routeSourceForTest('POST /api/integrations/github/start');
+  assert.match(startOAuth, /github_identity_links', \[ctx\.user!\.userId\]/);
+  assert.match(startOAuth, /appUserId: ctx\.user!\.userId/);
+  assert.match(startOAuth, /expiresAt: new Date\(createdAt\.getTime\(\) \+ 10 \* 60 \* 1000\)/);
+
+  const startDevice = routeSourceForTest('POST /api/integrations/github/device/start');
+  assert.match(startDevice, /appUserId: ctx\.user!\.userId/);
+  assert.match(startDevice, /deviceCodeHash: createHash\('sha256'\)/);
+
+  const pollDevice = routeSourceForTest('POST /api/integrations/github/device/poll');
+  assert.match(pollDevice, /flow\.appUserId !== user\.userId/);
+  assert.match(pollDevice, /flow\.deviceCodeHash !== createHash\('sha256'\)/);
+  assert.match(pollDevice, /if: \{ status: 'pending', appUserId: user\.userId \}/);
+
+  const callback = routeSourceForTest('GET /api/integrations/github/callback');
+  assert.match(callback, /savedState\.status !== 'pending'/);
+  assert.match(callback, /savedState\.purpose !== 'identity_link'/);
+  assert.match(callback, /new Date\(savedState\.expiresAt\)\.getTime\(\) <= Date\.now\(\)/);
+  assert.match(callback, /if: \{ status: 'pending', appUserId: savedState\.appUserId \}/);
+  assert.match(callback, /const \[existingOwner\] = await db\.get<GitHubIdentityOwner>/);
+
+  const disconnect = routeSourceForTest('POST /api/integrations/github/disconnect');
+  assert.match(disconnect, /github_identity_links', \[user\.userId\]/);
+  assert.match(disconnect, /owner\?\.appUserId === user\.userId/);
+});
+
+test('contributions and bounty routes preserve per-user and resource-owner authorization', () => {
+  const personalList = routeSourceForTest('GET /api/project-contributions');
+  assert.match(personalList, /userProjectContributionsTable\(ctx\.user!\.userId\)/);
+
+  const createPersonal = routeSourceForTest('POST /api/project-contributions');
+  assert.match(createPersonal, /contributorId: user\.userId/);
+  assert.match(createPersonal, /userProjectContributionsTable\(user\.userId\)/);
+
+  const verifyPersonal = routeSourceForTest('POST /api/project-contributions/:id/verify');
+  assert.match(verifyPersonal, /userProjectContributionsTable\(user\.userId\)/);
+  assert.match(verifyPersonal, /contribution\.riskLevel !== 'low' \|\| reviewRequired/);
+  assert.match(verifyPersonal, /db\.tx\.add\('xp_awards'/);
+  assert.match(verifyPersonal, /project_xp_' \+ contribution\.id/);
+
+  const createBounty = routeSourceForTest('POST /api/bounties');
+  assert.match(createBounty, /createBountyForUser\(ctx\.user!, ctx\.body\)/);
+
+  const submit = routeSourceForTest('POST /api/bounties/:id/submit');
+  assert.match(submit, /bounty\.createdBy === user\.userId/);
+  assert.match(submit, /bounty\.sample/);
+  assert.match(submit, /bounty\.status !== 'open'/);
+  assert.match(submit, /active_submissions/);
+
+  const myWork = routeSourceForTest('GET /api/my-work');
+  assert.match(myWork, /userBountiesTable\(user\.userId\)/);
+  assert.match(myWork, /userSubmissionsTable\(user\.userId\)/);
+  assert.match(myWork, /userReceivedTable\(user\.userId\)/);
+
+  const resubmit = routeSourceForTest('POST /api/contributions/:id/resubmit');
+  assert.match(resubmit, /contribution\.submitterId !== user\.userId/);
+  assert.match(resubmit, /contribution\.status !== 'needs_changes'/);
+  assert.match(resubmit, /if: \{ status: 'needs_changes', submitterId: user\.userId \}/);
+
+  const review = routeSourceForTest('POST /api/contributions/:id/review');
+  assert.match(review, /contribution\.ownerId !== ctx\.user!\.userId/);
+  assert.match(review, /contribution\.status !== 'pending'/);
+  assert.match(review, /criteriaChecks\.length !== acceptanceCriteria\.length/);
+  assert.match(review, /status === 'accepted' && !criteriaChecks\.every\(Boolean\)/);
+});
+
+function routeSourceForTest(name) {
+  const routePattern = /^[ \t]{2}'((?:OPTIONS|GET|POST|PUT|PATCH|DELETE) \/api\/[^']+)': \[/gm;
+  const declarations = [...backend.matchAll(routePattern)];
+  const index = declarations.findIndex((match) => match[1] === name);
+  assert.notEqual(index, -1, 'missing route: ' + name);
+  return backend.slice(
+    declarations[index].index,
+    declarations[index + 1]?.index ?? backend.length,
+  );
+}
+
+
+test('public bounty and leaderboard responses use explicit allowlisted projections', () => {
+  const publicBountyReader = backend.slice(
+    backend.indexOf("async function readBounties"),
+    backend.indexOf("type CreateBountyOutcome"),
+  );
+  assert.match(backend, /type PublicBounty = Omit<Bounty, 'createdBy'>/);
+  assert.match(publicBountyReader, /id: item\.id/);
+  assert.match(publicBountyReader, /createdByName: item\.createdByName/);
+  assert.doesNotMatch(
+    publicBountyReader,
+    /\bcreatedBy\s*:/,
+    'public bounty payload must not expose the internal creator account ID',
+  );
+
+  const leaderboard = routeSourceForTest('GET /api/leaderboard');
+  assert.match(leaderboard, /map\(profile => \(\{/);
+  assert.match(leaderboard, /displayName: profile\.displayName/);
+  assert.match(leaderboard, /xp: profile\.xp/);
+  assert.match(leaderboard, /acceptedCount: profile\.acceptedCount/);
+  assert.doesNotMatch(
+    leaderboard,
+    /profiles:\s*result\.items/,
+    'public leaderboard must not serialize raw database records',
+  );
+  assert.doesNotMatch(
+    frontend,
+    /user\?\.userId === item\.createdBy/,
+    'public bounty cards must not depend on a leaked internal creator ID',
+  );
+  assert.match(
+    frontend,
+    /work\.myBounties\.some\(ownedBounty => ownedBounty\.id === item\.id\)/,
+    'owner-only UI affordances should derive from the signed-in user’s private work view',
+  );
+});

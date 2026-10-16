@@ -48,7 +48,6 @@ type Bounty = {
   category: string;
   skills: string[];
   repoUrl?: string;
-  createdBy: string;
   createdByName: string;
   createdAt: string;
   status: 'open' | 'completed';
@@ -927,7 +926,7 @@ function App() {
   const renderBounty = (item: Bounty) => {
     const isPaid = item.tier === 'paid';
     const locked = isPaid && acceptedCount < item.minAccepted;
-    const owned = user?.userId === item.createdBy;
+    const owned = Boolean(user && work.myBounties.some(ownedBounty => ownedBounty.id === item.id));
     return (
       <article className="bounty-card" key={item.id}>
         <div className="bounty-topline">
