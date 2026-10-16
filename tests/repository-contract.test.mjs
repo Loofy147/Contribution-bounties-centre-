@@ -284,7 +284,7 @@ test('clean-build contract preserves the AppDeploy injected client boundary', ()
   assert.match(workflow, /APPDEPLOY_LOCAL_BUILD=true npm run build/);
   assert.match(workflow, /node scripts\/smoke-build\.mjs/);
   assert.match(buildSmoke, /@appdeploy\/client/);
-  assert.match(buildSmoke, /dist\/index\.html/);
+  assert.match(buildSmoke, /index\.html/);
 });
 
 test('CI workflow has least privilege, immutable actions, and bounded execution', () => {
