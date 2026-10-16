@@ -6,7 +6,6 @@ import {
   Award,
   BadgeCheck,
   BarChart3,
-  BookOpen,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -114,12 +113,6 @@ type WorkspaceMembership = {
   role: 'workspace_admin' | 'reviewer' | 'contributor' | 'observer';
   createdAt: string;
 };
-type GitHubOAuthState = {
-  id: string; appUserId: string; purpose: 'identity_link';
-  status: 'pending' | 'processing' | 'consumed' | 'failed' | 'cancelled';
-  createdAt: string; expiresAt: string;
-};
-
 type GitHubPatRepositoryStatus = {
   repositoryFullName: string;
   accessible: boolean;
@@ -778,7 +771,7 @@ function App() {
     setBusy(true);
     setError('');
     try {
-      const response = await api.post('/api/bounties', {
+      await api.post('/api/bounties', {
         title: bountyForm.title,
         description: bountyForm.description,
         reward: Number(bountyForm.reward),
