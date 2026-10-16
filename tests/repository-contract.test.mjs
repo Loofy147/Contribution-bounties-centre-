@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { requireUniqueMcpOwner } from '../backend/mcp-owner-resolution.mjs';
 
 const manifest = JSON.parse(
   await readFile(new URL('./tests.json', import.meta.url), 'utf8'),
@@ -25,6 +26,82 @@ const secretsWorkflow = await readFile(
   'utf8',
 );
 const gitleaksConfig = await readFile(new URL('../.gitleaks.toml', import.meta.url), 'utf8');
+
+test('MCP owner selection fails closed unless exactly one identity remains', () => {
+  assert.throws(
+    () => requireUniqueMcpOwner([]),
+    /mcp_owner_missing_or_ambiguous/,
+    'an empty allowlist must not resolve an owner',
+  );
+  assert.throws(
+    () => requireUniqueMcpOwner([
+      { userId: 'owner-a', email: 'first@example.test' },
+      { userId: 'owner-b', email: 'second@example.test' },
+    ]),
+    /mcp_owner_missing_or_ambiguous/,
+    'multiple distinct owner identities must be rejected',
+  );
+  assert.throws(
+    () => requireUniqueMcpOwner([
+      { userId: 'owner-a', email: 'owner@example.test' },
+      { userId: '  ', email: 'malformed@example.test' },
+    ]),
+    /mcp_owner_missing_or_ambiguous/,
+    'a malformed candidate must not be ignored in favor of another account',
+  );
+  assert.deepEqual(
+    requireUniqueMcpOwner([
+      { userId: 'owner-a', email: 'alias@example.test' },
+      { userId: 'owner-a', email: 'owner@example.test' },
+    ]),
+    { userId: 'owner-a', email: 'owner@example.test' },
+    'multiple allowlisted email aliases for the same account are one identity',
+  );
+});
+
+test('MCP tools resolve and validate the owner before returning account-scoped data', () => {
+  const resolver = backend.slice(
+    backend.indexOf('async function resolveMcpOwner'),
+    backend.indexOf('function mcpHeaderValue'),
+  );
+  const executor = backend.slice(
+    backend.indexOf('async function executeMcpTool'),
+    backend.indexOf('async function handleMcpRequest'),
+  );
+  assert.ok(resolver.includes('requireUniqueMcpOwner(candidates)'));
+  assert.ok(resolver.includes('isPlatformOwner({ userId: selected.userId, email: selected.email })'));
+  assert.ok(resolver.includes("if (!identity) throw new Error('mcp_owner_identity_missing')"));
+  assert.match(executor, /owner = await resolveMcpOwner\(\)/);
+  assert.match(executor, /return mcpToolFailure\('The configured platform-owner account could not be resolved uniquely/);
+});
+
+test('MCP tool declarations distinguish read-only tools from bounty creation', () => {
+  const definitions = backend.slice(
+    backend.indexOf('function mcpToolDefinitions'),
+    backend.indexOf('function mcpToolSuccess'),
+  );
+  const readOnly = [
+    'contribquest_get_status',
+    'contribquest_list_bounties',
+    'contribquest_get_bounty',
+    'contribquest_get_my_work',
+    'contribquest_list_workspaces',
+  ];
+  for (const name of readOnly) {
+    const nameOffset = definitions.indexOf("name: '" + name + "'");
+    assert.ok(nameOffset >= 0, 'missing MCP tool definition: ' + name);
+    const start = definitions.lastIndexOf('    {', nameOffset);
+    const closing = definitions.indexOf('\n    },', nameOffset);
+    const declaration = definitions.slice(start, closing + 7);
+    assert.match(declaration, /readOnlyHint: true/, name + ' must be annotated read-only');
+  }
+  const writeOffset = definitions.indexOf("name: 'contribquest_create_bounty'");
+  assert.ok(writeOffset >= 0, 'missing bounty creation tool');
+  const writeStart = definitions.lastIndexOf('    {', writeOffset);
+  const writeClosing = definitions.indexOf('\n    },', writeOffset);
+  assert.match(definitions.slice(writeStart, writeClosing + 7), /readOnlyHint: false/);
+});
+
 
 test('QA manifest includes the core workflow scenarios', () => {
   assert.equal(manifest.length, 5, 'expected five consolidated browser scenarios');
