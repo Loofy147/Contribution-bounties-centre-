@@ -29,6 +29,10 @@
 | `POST /api/integrations/github/pat/verify` | Platform owner only | Requires session and configured-owner identity; tests only the fixed allowlisted repositories |
 | `POST /api/integrations/github/pat/file/read` | Platform owner only | Requires session/owner; validates repository against allowlist and path/branch before GitHub read |
 | `POST /api/integrations/github/pat/file/write` | Platform owner only | Requires session/owner; validates repository allowlist/path/branch and applies explicit write request |
+| `GET /api/integrations/github-app/status` | Authenticated user's own installation connection | Reads the user's own connection record; re-verifies the installation and selected repositories against GitHub on every status read; unavailable/revoked installs return disconnected and no repository list |
+| `POST /api/integrations/github-app/start` | Authenticated account's own installation flow | Requires app ID/slug/private-key secrets; creates random 10-minute state bound to current app user and returns a fixed GitHub setup URL |
+| `GET /api/integrations/github-app/callback` | GitHub setup redirect; session is not required by design | Requires one-time unexpired state; validates app/installation IDs through GitHub; rejects extra/write permissions; records repository IDs/metadata but never stores installation tokens |
+| `POST /api/integrations/github-app/disconnect` | Authenticated user's own installation connection | Deletes only the current user's connection record and writes an audit event |
 | `POST /api/integrations/github/start` | Authenticated account's own link flow | Rejects already-linked account; creates random, expiring OAuth state bound to current app user |
 | `POST /api/integrations/github/device/start` | Authenticated account's own link flow | Rejects already-linked account; validates provider response and stores a hash of the device code |
 | `POST /api/integrations/github/device/poll` | Authenticated owner of device-flow record | Binds flow to `appUserId` and code digest; enforces expiry/status; prevents linking a GitHub identity already owned by another account |
@@ -44,6 +48,14 @@
 | `GET /api/my-work` | Authenticated account's private work | Reads the caller's own bounty, submission, received-work and profile partitions |
 | `POST /api/contributions/:id/resubmit` | Original contributor only | Requires submitter ID match, `needs_changes` state and open bounty; conditional updates retain that ownership condition |
 | `POST /api/contributions/:id/review` | Bounty owner only | Requires owner ID match, pending state, checklist length match; acceptance requires every criterion to pass |
+
+## GitHub App installation boundary
+
+The installation path is separate from GitHub identity OAuth and the owner-only PAT helper. It requires `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and `GITHUB_APP_PRIVATE_KEY`. The GitHub App Setup URL must point to `/api/integrations/github-app/callback`; it is not the User authorization callback already used for identity linking.
+
+Only these App permissions are accepted: Metadata: Read, Contents: Read, Issues: Read and Pull requests: Read. The callback validates the installation against the configured App ID, retrieves repository identifiers/metadata from GitHub, and rejects more than 100 selected repositories rather than creating an incomplete snapshot. The short-lived installation token is used transiently on the server, never stored in the connection record or returned to the browser.
+
+Every status read re-verifies the installation and re-lists the currently selected repositories. If the App is uninstalled, suspended, revoked, or cannot issue an installation token, status fails closed and the response does not include repositories. Disconnect removes only the current user's connection record. Repository content-read/sync operations are not part of this increment and must re-verify access before being added.
 
 ## Regression controls added in this branch
 
