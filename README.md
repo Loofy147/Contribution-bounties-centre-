@@ -32,6 +32,7 @@ Acceptance currently grants 50 platform XP and increments an accepted-work count
 - [Acceptance protocol](docs/acceptance-protocol.md)
 - [Engineering decisions](docs/decisions.md)
 - [Roadmap and verification gates](docs/roadmap.md)
+- [XP ledger and audit-event contract](docs/XP_LEDGER_AND_AUDIT_EVENTS.md)
 - [CI/CD pipeline and release readiness](docs/ci-cd-pipeline.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security reporting](SECURITY.md)

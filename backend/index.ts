@@ -110,7 +110,8 @@ type GitHubDeviceFlow = {
 };
 type AuditEvent = {
   id: string; actorUserId: string; action: string; resourceType: string; resourceId: string;
-  targetUserId?: string; role?: string; createdAt: string;
+  targetUserId?: string; role?: string; decision?: string; revisionNumber?: number; ruleVersion?: string;
+  createdAt: string;
 };
 const APP_BASE_URL = 'https://contribquest-lygj1x.v2.appdeploy.ai';
 const GITHUB_CALLBACK_URL = APP_BASE_URL + '/api/integrations/github/callback';
@@ -302,7 +303,7 @@ function githubCallbackRedirect(status: 'linked' | 'cancelled' | 'configuration_
 }
 function appendAuditEvent(
   actorUserId: string, action: string, resourceType: string, resourceId: string,
-  fields: { targetUserId?: string; role?: string } = {}
+  fields: { targetUserId?: string; role?: string; decision?: string; revisionNumber?: number; ruleVersion?: string } = {}
 ): AuditEvent {
   return { id: newRecordId('audit'), actorUserId, action, resourceType, resourceId, ...fields, createdAt: new Date().toISOString() };
 }
@@ -2418,14 +2419,22 @@ export const handler = router({
         const submitterIndexWrite = db.tx.add(userSubmissionsTable(user.userId), [persisted]);
         const ownerIndexWrite = db.tx.add(userReceivedTable(bounty.createdBy), [persisted]);
         const guardWrite = db.tx.add('active_submissions', [guard]);
-        const [contributionIds, submitterIds, ownerIds, guardIds] = await db.transact([
+        const auditWrite = db.tx.add('audit_events', [
+          appendAuditEvent(user.userId, 'contribution.submitted', 'contribution', id, {
+            targetUserId: bounty.createdBy,
+            decision: 'submitted',
+            revisionNumber: 1,
+          }),
+        ]);
+        const [contributionIds, submitterIds, ownerIds, guardIds, auditIds] = await db.transact([
           contributionWrite,
           submitterIndexWrite,
           ownerIndexWrite,
           guardWrite,
+          auditWrite,
         ]);
-        if (!contributionIds[0] || !submitterIds[0] || !ownerIds[0] || !guardIds[0])
-          return error('Your submission could not be saved atomically. Please refresh and retry.', 503);
+        if (!contributionIds[0] || !submitterIds[0] || !ownerIds[0] || !guardIds[0] || !auditIds[0])
+          return error('Your submission and audit record could not be saved atomically. Please refresh and retry.', 503);
       } catch (cause: unknown) {
         if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
         const [confirmedGuard] = await db.get<ActiveSubmission>('active_submissions', [guardId], {
@@ -2546,6 +2555,13 @@ export const handler = router({
             record: revisionPatch,
             if: { status: 'needs_changes', submitterId: user.userId },
           }], { patch: true }),
+          db.tx.add('audit_events', [
+            appendAuditEvent(user.userId, 'contribution.resubmitted', 'contribution', ctx.params.id, {
+              targetUserId: contribution.ownerId,
+              decision: 'resubmitted',
+              revisionNumber,
+            }),
+          ]),
         ]);
       } catch (cause: unknown) {
         if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
@@ -2655,6 +2671,26 @@ export const handler = router({
             [{ id: contribution.submitterId, record: { xp: increment(50), acceptedCount: increment(1) } }],
             { patch: true }
           );
+          const awardId = 'community_xp_' + contribution.id;
+          const xpAwardWrite = db.tx.add('xp_awards', [{
+            id: awardId,
+            userId: contribution.submitterId,
+            actorUserId: ctx.user!.userId,
+            contributionId: contribution.id,
+            contributionRevision: contribution.revisionNumber ?? 1,
+            amount: 50,
+            ruleVersion: 'community-review-v1',
+            verificationLevel: 'independently_reviewed',
+            createdAt: reviewedAt,
+          }]);
+          const auditWrite = db.tx.add('audit_events', [
+            appendAuditEvent(ctx.user!.userId, 'contribution.review.accepted', 'contribution', contribution.id, {
+              targetUserId: contribution.submitterId,
+              decision: 'accepted',
+              revisionNumber: contribution.revisionNumber ?? 1,
+              ruleVersion: 'community-review-v1',
+            }),
+          ]);
           const guardDelete = db.tx.delete('active_submissions', [
             submissionGuardId(contribution.bountyId, contribution.submitterId),
           ]);
@@ -2665,6 +2701,8 @@ export const handler = router({
             bountyUpdate,
             profileUpdate,
             guardDelete,
+            xpAwardWrite,
+            auditWrite,
           ]);
         } catch (cause: unknown) {
           if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
@@ -2672,9 +2710,10 @@ export const handler = router({
           if (saved?.status === 'accepted') {
             return json({
               reviewed: true,
+              duplicate: true,
               status: 'accepted',
               xpAwarded: 50,
-              message: 'Contribution accepted. 50 XP awarded.',
+              message: 'This contribution is already accepted. No duplicate XP was awarded.',
             });
           }
           return error(
@@ -2713,6 +2752,13 @@ export const handler = router({
           record: reviewPatch,
           if: { status: 'pending' },
         }], { patch: true });
+        const auditWrite = db.tx.add('audit_events', [
+          appendAuditEvent(ctx.user!.userId, 'contribution.review.' + status, 'contribution', contribution.id, {
+            targetUserId: contribution.submitterId,
+            decision: status,
+            revisionNumber: contribution.revisionNumber ?? 1,
+          }),
+        ]);
         if (status === 'rejected') {
           await db.transact([
             contributionUpdate,
@@ -2721,9 +2767,10 @@ export const handler = router({
             db.tx.delete('active_submissions', [
               submissionGuardId(contribution.bountyId, contribution.submitterId),
             ]),
+            auditWrite,
           ]);
         } else {
-          await db.transact([contributionUpdate, submitterIndexUpdate, ownerIndexUpdate]);
+          await db.transact([contributionUpdate, submitterIndexUpdate, ownerIndexUpdate, auditWrite]);
         }
       } catch (cause: unknown) {
         if (isAppDatabaseError(cause) && cause.code === 'AppDatabaseQuotaExceeded') throw cause;
