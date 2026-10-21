@@ -130,6 +130,24 @@ type GitHubPatVerification = {
   repositories?: GitHubPatRepositoryStatus[];
   message?: string;
 };
+type GitHubAppRepository = {
+  id: number; name: string; fullName: string; private: boolean; defaultBranch: string;
+};
+type GitHubAppInstallationStatus = {
+  configured: boolean;
+  connected: boolean;
+  hasConnectionRecord: boolean;
+  installationId?: number;
+  account?: { id: number; login: string; type: string };
+  permissions?: Record<string, string>;
+  repositoryCount?: number;
+  repositories?: GitHubAppRepository[];
+  connectedAt?: string;
+  lastVerifiedAt?: string;
+  callbackUrl?: string;
+  requiredSecrets?: string[];
+  message?: string;
+};
 type GitHubPatFile = {
   repo: string;
   path: string;
@@ -271,6 +289,8 @@ function App() {
   const [securityState, setSecurityState] = useState<AccountSecurity | null>(null);
   const [securityLoading, setSecurityLoading] = useState(false);
   const [securityBusy, setSecurityBusy] = useState(false);
+  const [githubAppStatus, setGitHubAppStatus] = useState<GitHubAppInstallationStatus | null>(null);
+  const [githubAppBusy, setGitHubAppBusy] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMembership[]>([]);
@@ -354,7 +374,27 @@ function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('integration') === 'github') {
+    const integration = params.get('integration');
+    if (integration === 'github-app') {
+      const status = params.get('status');
+      const messages: Record<string, string> = {
+        linked: 'GitHub App installation verified. Selected-repository metadata is now available read-only.',
+        cancelled: 'GitHub App installation was cancelled.',
+        configuration_required: 'The GitHub App is not configured. Add GITHUB_APP_ID, GITHUB_APP_SLUG and GITHUB_APP_PRIVATE_KEY through AppDeploy secure backend-secret entry.',
+        state_invalid: 'The GitHub App setup attempt expired or could not be verified. Start a fresh installation.',
+        installation_unavailable: 'GitHub could not verify this installation. No repository access is enabled.',
+        insufficient_permissions: 'The GitHub App installation must use read-only Metadata, Contents, Issues and Pull requests permissions only.',
+        repository_scope_too_large: 'The GitHub App must be installed on 1–100 selected repositories for this initial version. Narrow the installation and retry.',
+        connection_exists: 'A GitHub App connection record already exists. Review its current status and disconnect it before replacing the installation.',
+        persistence_failed: 'GitHub verified the installation, but ContribQuest could not save its connection record. Refresh status before retrying.',
+        failed: 'GitHub App installation could not be verified. Check app configuration and selected repository access, then retry.',
+      };
+      setView('Account & integrations');
+      setToast(status ? (messages[status] || 'GitHub App installation was not confirmed. Refresh the account settings before retrying.') : 'GitHub App installation was not confirmed.');
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
+    if (integration === 'github') {
       const status = params.get('status');
       const messages: Record<string, string> = {
         linked: 'GitHub identity linked to this existing account.',
@@ -509,6 +549,17 @@ function App() {
       const response = await api.get('/api/account/security');
       const summary = response.data as AccountSecurity;
       setSecurityState(summary);
+      try {
+        const appStatusResponse = await api.get('/api/integrations/github-app/status');
+        setGitHubAppStatus(appStatusResponse.data as GitHubAppInstallationStatus);
+      } catch {
+        setGitHubAppStatus({
+          configured: false,
+          connected: false,
+          hasConnectionRecord: false,
+          message: 'GitHub App installation status is unavailable in this runtime. Repository access remains disabled.',
+        });
+      }
       const selected = summary.access.workspaces.some(item => item.workspaceId === selectedWorkspaceId)
         ? selectedWorkspaceId : summary.access.workspaces[0]?.workspaceId || '';
       if (selected && selected !== selectedWorkspaceId) setSelectedWorkspaceId(selected);
@@ -519,6 +570,40 @@ function App() {
       } else setWorkspaceMembers([]);
     } catch (err) { setError(errorText(err)); }
     finally { setSecurityLoading(false); }
+  };
+
+  const startGitHubAppInstallation = async () => {
+    setGithubAppBusy(true);
+    setError('');
+    try {
+      const response = await api.post('/api/integrations/github-app/start', {});
+      const value = response.data?.setupUrl;
+      if (typeof value !== 'string') throw new Error('The backend did not return a GitHub App setup URL.');
+      const setupUrl = new URL(value);
+      if (setupUrl.origin !== 'https://github.com' ||
+          !/^\/apps\/[a-z0-9-]+\/installations\/new$/.test(setupUrl.pathname) ||
+          !setupUrl.searchParams.has('state')) {
+        throw new Error('The backend returned an invalid GitHub App setup URL.');
+      }
+      window.location.assign(setupUrl.toString());
+    } catch (err) {
+      setError(errorText(err));
+      setGithubAppBusy(false);
+    }
+  };
+
+  const disconnectGitHubAppInstallation = async () => {
+    setGithubAppBusy(true);
+    setError('');
+    try {
+      await api.post('/api/integrations/github-app/disconnect', {});
+      await refreshSecurity();
+      showToast('GitHub App connection record removed. Any later access requires a new verified installation.');
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setGithubAppBusy(false);
+    }
   };
 
   const startGitHubConnection = async () => {
@@ -1870,6 +1955,53 @@ function App() {
             </div>}
             <p className="settings-footnote">The device method avoids the callback redirect. ContribQuest stores only a hash of the temporary device code; the returned access token is never stored in normal app records.</p>
           </>}
+        </section>
+
+
+        <section className="settings-panel settings-panel-wide">
+          <div className="settings-panel-heading">
+            <GitBranch size={21}/>
+            <div>
+              <h2>GitHub App repository installation</h2>
+              <p>Connect selected repositories with the GitHub App. This is separate from linking a GitHub identity.</p>
+            </div>
+            <span className={'settings-status '+(githubAppStatus?.connected?'settings-status-good':'')}>
+              {githubAppStatus?.connected?'Verified':githubAppStatus?.hasConnectionRecord?'Needs attention':githubAppStatus?.configured?'Ready':'Not configured'}
+            </span>
+          </div>
+          {githubAppStatus?.connected ? <>
+            <div className="settings-detail-list">
+              <div><span>Installation account</span><strong>{githubAppStatus.account?.login} ({githubAppStatus.account?.type})</strong></div>
+              <div><span>Installation ID</span><code>{githubAppStatus.installationId}</code></div>
+              <div><span>Repository count</span><strong>{githubAppStatus.repositoryCount ?? githubAppStatus.repositories?.length ?? 0}</strong></div>
+              <div><span>Granted permissions</span><strong>{Object.entries(githubAppStatus.permissions ?? {}).map(([name,level])=>name+': '+level).join(', ')}</strong></div>
+              <div><span>Last verified</span><strong>{githubAppStatus.lastVerifiedAt ? shortDate(githubAppStatus.lastVerifiedAt) : 'Just checked'}</strong></div>
+            </div>
+            <div className="github-pat-repo-results">
+              {(githubAppStatus.repositories ?? []).map(repository => <div className="github-pat-repo-row" key={repository.id}>
+                <div><strong>{repository.fullName}</strong><small>{repository.private ? 'Private repository' : 'Public repository'} · default branch: {repository.defaultBranch} · GitHub repository ID {repository.id}</small></div>
+                <span className="settings-status settings-status-good">Read-only scope</span>
+              </div>)}
+            </div>
+            <p className="settings-footnote">A fresh installation token is minted server-side only to re-verify current access and list repository metadata. It is not saved in ContribQuest records or returned to the browser.</p>
+            <button className="button button-muted" disabled={githubAppBusy} onClick={() => void disconnectGitHubAppInstallation()}>{githubAppBusy?'Disconnecting…':'Disconnect installation'}</button>
+          </> : <>
+            <div className="settings-detail-list">
+              <div><span>App ID</span><strong>{githubAppStatus?.configured?'Configured':'Missing backend secret'}</strong></div>
+              <div><span>App slug</span><strong>{githubAppStatus?.configured?'Configured':'Missing backend secret'}</strong></div>
+              <div><span>Private key</span><strong>{githubAppStatus?.configured?'Configured in backend secrets':'Missing backend secret'}</strong></div>
+              <div><span>Setup URL / callback</span><code>{githubAppStatus?.callbackUrl || 'https://contribquest-lygj1x.v2.appdeploy.ai/api/integrations/github-app/callback'}</code></div>
+              <div><span>Required permissions</span><strong>Metadata: Read · Contents: Read · Issues: Read · Pull requests: Read</strong></div>
+            </div>
+            {githubAppStatus?.message && <div className="settings-notice"><Activity size={17}/><span>{githubAppStatus.message}</span></div>}
+            {githubAppStatus?.hasConnectionRecord && <div className="settings-notice"><LockKeyhole size={17}/><span>A previous installation record exists but could not be verified. Disconnect that record before connecting another installation; no repository access is granted while verification fails.</span></div>}
+            {!githubAppStatus?.configured && <div className="settings-notice"><LockKeyhole size={17}/><span>Create the GitHub App first, configure its Setup URL to this callback, then add <code>GITHUB_APP_ID</code>, <code>GITHUB_APP_SLUG</code> and <code>GITHUB_APP_PRIVATE_KEY</code> with AppDeploy's secure backend-secret flow. Do not paste the private key into the browser or source.</span></div>}
+            <button className="button button-dark" disabled={githubAppBusy || !githubAppStatus?.configured || Boolean(githubAppStatus.connected) || Boolean(githubAppStatus.hasConnectionRecord)} onClick={() => void startGitHubAppInstallation()}>
+              {githubAppBusy?'Preparing installation…':'Install GitHub App on selected repositories'} <ArrowUpRight size={15}/>
+            </button>
+            <p className="settings-footnote">GitHub's installation screen determines the selected repositories. ContribQuest rejects write-level or extra permissions and currently limits the connection snapshot to 100 repositories. A successful install is not a repository write permission or a self-hosted runtime.</p>
+          </>}
+          {githubAppStatus?.message && githubAppStatus.connected && <div className="settings-notice"><CheckCircle2 size={17}/><span>{githubAppStatus.message}</span></div>}
         </section>
 
         <section className="settings-panel settings-panel-wide">

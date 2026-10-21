@@ -384,6 +384,10 @@ test('every API route has an explicit public, bearer, session, or one-time-state
     'POST /api/integrations/github/pat/verify',
     'POST /api/integrations/github/pat/file/read',
     'POST /api/integrations/github/pat/file/write',
+    'GET /api/integrations/github-app/status',
+    'POST /api/integrations/github-app/start',
+    'GET /api/integrations/github-app/callback',
+    'POST /api/integrations/github-app/disconnect',
     'POST /api/integrations/github/start',
     'POST /api/integrations/github/device/start',
     'POST /api/integrations/github/device/poll',
@@ -425,6 +429,9 @@ test('every API route has an explicit public, bearer, session, or one-time-state
     'POST /api/integrations/github/pat/verify',
     'POST /api/integrations/github/pat/file/read',
     'POST /api/integrations/github/pat/file/write',
+    'GET /api/integrations/github-app/status',
+    'POST /api/integrations/github-app/start',
+    'POST /api/integrations/github-app/disconnect',
     'POST /api/integrations/github/start',
     'POST /api/integrations/github/device/start',
     'POST /api/integrations/github/device/poll',
@@ -612,4 +619,52 @@ test('public bounty and leaderboard responses use explicit allowlisted projectio
     /work\.myBounties\.some\(ownedBounty => ownedBounty\.id === item\.id\)/,
     'owner-only UI affordances should derive from the signed-in user’s private work view',
   );
+});
+
+
+test('GitHub App installation binds one-time state to the current account and enforces read-only installation scope', () => {
+  assert.ok(backend.includes("const GITHUB_APP_ID_SECRET = 'GITHUB_APP_ID'"));
+  assert.ok(backend.includes("const GITHUB_APP_SLUG_SECRET = 'GITHUB_APP_SLUG'"));
+  assert.ok(backend.includes("const GITHUB_APP_PRIVATE_KEY_SECRET = 'GITHUB_APP_PRIVATE_KEY'"));
+  assert.match(backend, /function githubAppJwt\(config: GitHubAppConfig\)/);
+  assert.match(backend, /alg: 'RS256'/);
+  assert.match(backend, /exp: now \+ 8 \* 60/);
+  assert.match(backend, /function validateGitHubAppReadPermissions/);
+  assert.match(backend, /github_app_permissions_exceed_read_only_policy/);
+  assert.match(backend, /github_app_repository_scope_too_large_or_invalid/);
+  assert.match(backend, /apiBase \+ '\\/app\\/installations\\/' \+ installationId \+ '\\/access_tokens'/);
+  assert.match(backend, /apiBase \+ '\\/installation\\/repositories\\?per_page=100&page=1'/);
+  assert.match(backend, /repositoryNames: snapshot\.repositories\.map\(item => item\.fullName\)/);
+  assert.match(backend, /The installation token is intentionally ephemeral/);
+
+  const start = routeSourceForTest('POST /api/integrations/github-app/start');
+  assert.match(start, /requireAuth\(\)/);
+  assert.match(start, /appUserId: ctx\.user!\.userId/);
+  assert.match(start, /purpose: 'installation'/);
+  assert.match(start, /expiresAt/);
+  assert.match(start, /https:\/\/github\.com\/apps\/' \+ config\.slug \+ '\/installations\/new/);
+
+  const callback = routeSourceForTest('GET /api/integrations/github-app/callback');
+  assert.doesNotMatch(callback, /requireAuth\(\)/, 'provider callback authenticates using one-time installation state');
+  assert.match(callback, /savedState\.purpose !== 'installation'/);
+  assert.match(callback, /savedState\.status !== 'pending'/);
+  assert.match(callback, /new Date\(savedState\.expiresAt\)\.getTime\(\) <= Date\.now\(\)/);
+  assert.match(callback, /if: \{ status: 'pending', appUserId: savedState\.appUserId \}/);
+  assert.match(callback, /verifyGitHubAppInstallation\(config, Number\(installationValue\)\)/);
+  assert.match(callback, /github_app_connections/);
+  assert.match(callback, /github_app\.installation_connected/);
+
+  const status = routeSourceForTest('GET /api/integrations/github-app/status');
+  assert.match(status, /requireAuth\(\)/);
+  assert.match(status, /githubAppConnectionId\(ctx\.user!\.userId\)/);
+  assert.match(status, /verifyGitHubAppInstallation\(config, connection\.installationId\)/);
+  assert.match(status, /repository access remains disabled/);
+
+  const disconnect = routeSourceForTest('POST /api/integrations/github-app/disconnect');
+  assert.match(disconnect, /requireAuth\(\)/);
+  assert.match(disconnect, /githubAppConnectionId\(user\.userId\)/);
+  assert.match(disconnect, /db\.tx\.delete\('github_app_connections'/);
+
+  assert.doesNotMatch(backend, /type GitHubAppConnection = \{[^}]*accessToken/s);
+  assert.doesNotMatch(backend, /accessToken:\s*installationToken/);
 });

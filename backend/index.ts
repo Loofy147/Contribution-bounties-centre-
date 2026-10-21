@@ -9,7 +9,7 @@ import {
   secrets,
 } from '@appdeploy/sdk';
 import { requireUniqueMcpOwner } from './mcp-owner-resolution.mjs';
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createSign, randomUUID, timingSafeEqual } from 'node:crypto';
 
 type Bounty = {
   title: string;
@@ -103,6 +103,25 @@ type GitHubOAuthState = {
   status: 'pending' | 'processing' | 'consumed' | 'failed' | 'cancelled';
   createdAt: string; expiresAt: string;
 };
+type GitHubAppInstallState = {
+  id: string; appUserId: string; purpose: 'installation';
+  status: 'pending' | 'processing' | 'consumed' | 'failed' | 'cancelled';
+  createdAt: string; expiresAt: string;
+};
+type GitHubAppRepository = {
+  id: number; name: string; fullName: string; private: boolean; defaultBranch: string;
+};
+type GitHubAppConnection = {
+  id: string; appUserId: string; installationId: number;
+  accountId: number; accountLogin: string; accountType: string;
+  repositoryIds: number[]; repositoryNames: string[];
+  permissions: Record<string, string>; connectedAt: string; lastVerifiedAt: string;
+};
+type GitHubAppConfig = { appId: string; slug: string; privateKey: string };
+type GitHubAppInstallationSnapshot = {
+  installationId: number; accountId: number; accountLogin: string; accountType: string;
+  permissions: Record<string, string>; repositories: GitHubAppRepository[];
+};
 type GitHubDeviceFlow = {
   id: string; appUserId: string; deviceCodeHash: string; userCode: string;
   status: 'pending' | 'consumed' | 'failed' | 'expired';
@@ -118,6 +137,10 @@ const PLATFORM_OWNER_SECRET = 'PLATFORM_OWNER_EMAILS';
 const GITHUB_CLIENT_ID_SECRET = 'GITHUB_CLIENT_ID';
 const GITHUB_CLIENT_SECRET_SECRET = 'GITHUB_CLIENT_SECRET';
 const GITHUB_PAT_SECRET = 'GITHUB_PAT';
+const GITHUB_APP_ID_SECRET = 'GITHUB_APP_ID';
+const GITHUB_APP_SLUG_SECRET = 'GITHUB_APP_SLUG';
+const GITHUB_APP_PRIVATE_KEY_SECRET = 'GITHUB_APP_PRIVATE_KEY';
+const GITHUB_APP_CALLBACK_URL = APP_BASE_URL + '/api/integrations/github-app/callback';
 const MCP_TOKEN_SECRET = 'CONTRIBQUEST_MCP_TOKEN';
 const GITHUB_PAT_REPOSITORIES = ['Contribution-bounties-centre-', 'contribution-network'] as const;
 type GitHubPatRepository = typeof GITHUB_PAT_REPOSITORIES[number];
@@ -300,6 +323,221 @@ function githubCallbackRedirect(status: 'linked' | 'cancelled' | 'configuration_
     body: '',
   };
 }
+
+async function readGitHubAppConfig(): Promise<GitHubAppConfig | null> {
+  try {
+    const names = await secrets.listSecretNames();
+    if (![GITHUB_APP_ID_SECRET, GITHUB_APP_SLUG_SECRET, GITHUB_APP_PRIVATE_KEY_SECRET]
+      .every(name => names.includes(name))) return null;
+    const [rawAppId, rawSlug, rawPrivateKey] = await Promise.all([
+      secrets.readSecret(GITHUB_APP_ID_SECRET),
+      secrets.readSecret(GITHUB_APP_SLUG_SECRET),
+      secrets.readSecret(GITHUB_APP_PRIVATE_KEY_SECRET),
+    ]);
+    const appId = rawAppId.trim();
+    const slug = rawSlug.trim().toLowerCase();
+    const privateKey = rawPrivateKey.replace(/\\n/g, '\n').trim();
+    if (!/^[1-9][0-9]{0,15}$/.test(appId) || !Number.isSafeInteger(Number(appId)) ||
+        !/^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/.test(slug) ||
+        !/^-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]+-----END (?:RSA )?PRIVATE KEY-----$/.test(privateKey)) {
+      return null;
+    }
+    return { appId, slug, privateKey };
+  } catch {
+    return null;
+  }
+}
+
+function githubAppConnectionId(userId: string): string {
+  return 'github_app_connection_' + userPartitionKey(userId);
+}
+
+function encodeBase64Url(value: string | Uint8Array): string {
+  return Buffer.from(value).toString('base64url');
+}
+
+function githubAppJwt(config: GitHubAppConfig): string {
+  const now = Math.floor(Date.now() / 1000);
+  const encodedHeader = encodeBase64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const encodedPayload = encodeBase64Url(JSON.stringify({
+    iat: now - 30,
+    exp: now + 8 * 60,
+    iss: config.appId,
+  }));
+  const unsignedToken = encodedHeader + '.' + encodedPayload;
+  const signer = createSign('RSA-SHA256');
+  signer.update(unsignedToken);
+  signer.end();
+  return unsignedToken + '.' + signer.sign(config.privateKey).toString('base64url');
+}
+
+async function githubAppFetch(url: string, token: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: 'Bearer ' + token,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'ContribQuest',
+      ...(init.headers as Record<string, string> | undefined),
+    },
+  });
+}
+
+function validateGitHubAppReadPermissions(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('github_app_permissions_invalid');
+  }
+  const permissions = value as Record<string, unknown>;
+  const permittedNames = new Set(['metadata', 'contents', 'issues', 'pull_requests']);
+  for (const [name, permission] of Object.entries(permissions)) {
+    if (!permittedNames.has(name) || permission !== 'read') {
+      throw new Error('github_app_permissions_exceed_read_only_policy');
+    }
+  }
+  for (const required of ['metadata', 'contents', 'issues', 'pull_requests']) {
+    if (permissions[required] !== 'read') {
+      throw new Error('github_app_required_read_permissions_missing');
+    }
+  }
+  return Object.fromEntries(Object.entries(permissions).map(([name, permission]) => [name, String(permission)]));
+}
+
+async function verifyGitHubAppInstallation(
+  config: GitHubAppConfig,
+  installationId: number,
+): Promise<GitHubAppInstallationSnapshot> {
+  const jwt = githubAppJwt(config);
+  const apiBase = 'https://api.github.com';
+  const installationResponse = await githubAppFetch(
+    apiBase + '/app/installations/' + installationId,
+    jwt,
+  );
+  if (installationResponse.status === 404 || installationResponse.status === 401 ||
+      installationResponse.status === 403) {
+    throw new Error('github_app_installation_unavailable');
+  }
+  if (!installationResponse.ok) throw new Error('github_app_installation_check_failed');
+  const installation = await installationResponse.json() as Record<string, unknown>;
+  if (installation.id !== installationId || String(installation.app_id) !== config.appId) {
+    throw new Error('github_app_installation_app_mismatch');
+  }
+  if (installation.suspended_at) throw new Error('github_app_installation_suspended');
+  const account = installation.account && typeof installation.account === 'object'
+    ? installation.account as Record<string, unknown> : {};
+  if (typeof account.id !== 'number' || !Number.isSafeInteger(account.id) || account.id <= 0 ||
+      typeof account.login !== 'string' || !account.login ||
+      (account.type !== 'User' && account.type !== 'Organization')) {
+    throw new Error('github_app_installation_account_invalid');
+  }
+  const permissions = validateGitHubAppReadPermissions(installation.permissions);
+
+  const tokenResponse = await githubAppFetch(
+    apiBase + '/app/installations/' + installationId + '/access_tokens',
+    jwt,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions: {
+        contents: 'read', issues: 'read', metadata: 'read', pull_requests: 'read',
+      } }),
+    },
+  );
+  if (tokenResponse.status === 404 || tokenResponse.status === 401 ||
+      tokenResponse.status === 403) {
+    throw new Error('github_app_installation_unavailable');
+  }
+  if (!tokenResponse.ok) throw new Error('github_app_token_request_failed');
+  const tokenPayload = await tokenResponse.json() as Record<string, unknown>;
+  const installationToken = tokenPayload.token;
+  if (typeof installationToken !== 'string' || !installationToken) {
+    throw new Error('github_app_token_response_invalid');
+  }
+
+  // The installation token is intentionally ephemeral: never persist, return, or log it.
+  const repositoriesResponse = await githubAppFetch(
+    apiBase + '/installation/repositories?per_page=100&page=1',
+    installationToken,
+  );
+  if (repositoriesResponse.status === 404 || repositoriesResponse.status === 401 ||
+      repositoriesResponse.status === 403) {
+    throw new Error('github_app_installation_unavailable');
+  }
+  if (!repositoriesResponse.ok) throw new Error('github_app_repository_list_failed');
+  const repositoryPayload = await repositoriesResponse.json() as Record<string, unknown>;
+  const totalCount = repositoryPayload.total_count;
+  const rawRepositories = repositoryPayload.repositories;
+  if (!Array.isArray(rawRepositories) || typeof totalCount !== 'number' ||
+      !Number.isSafeInteger(totalCount) || totalCount < 0 || totalCount > 100 ||
+      rawRepositories.length !== totalCount) {
+    throw new Error('github_app_repository_scope_too_large_or_invalid');
+  }
+  if (rawRepositories.length === 0) throw new Error('github_app_no_repositories');
+  const seenIds = new Set<number>();
+  const repositories: GitHubAppRepository[] = [];
+  for (const raw of rawRepositories) {
+    if (!raw || typeof raw !== 'object') throw new Error('github_app_repository_response_invalid');
+    const item = raw as Record<string, unknown>;
+    if (typeof item.id !== 'number' || !Number.isSafeInteger(item.id) || item.id <= 0 ||
+        typeof item.name !== 'string' || !item.name ||
+        typeof item.full_name !== 'string' || !/^[^/]+\/[^/]+$/.test(item.full_name) ||
+        (item.default_branch !== undefined && typeof item.default_branch !== 'string')) {
+      throw new Error('github_app_repository_response_invalid');
+    }
+    if (seenIds.has(item.id)) throw new Error('github_app_repository_response_invalid');
+    seenIds.add(item.id);
+    repositories.push({
+      id: item.id,
+      name: item.name,
+      fullName: item.full_name,
+      private: item.private === true,
+      defaultBranch: typeof item.default_branch === 'string' ? item.default_branch : 'main',
+    });
+  }
+  repositories.sort((left, right) => left.fullName.localeCompare(right.fullName));
+  return {
+    installationId,
+    accountId: account.id,
+    accountLogin: account.login,
+    accountType: account.type,
+    permissions,
+    repositories,
+  };
+}
+
+function githubAppSetupRedirect(status:
+  | 'linked' | 'cancelled' | 'configuration_required' | 'state_invalid'
+  | 'installation_unavailable' | 'insufficient_permissions' | 'repository_scope_too_large'
+  | 'connection_exists' | 'persistence_failed' | 'failed'
+): { statusCode: number; headers: Record<string, string>; body: string } {
+  return {
+    statusCode: 302,
+    headers: {
+      Location: APP_BASE_URL + '/?integration=github-app&status=' + status,
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+    },
+    body: '',
+  };
+}
+
+function githubAppCallbackFailureStatus(cause: unknown):
+  | 'configuration_required' | 'installation_unavailable' | 'insufficient_permissions'
+  | 'repository_scope_too_large' | 'connection_exists' | 'persistence_failed' | 'failed' {
+  const code = cause instanceof Error ? cause.message : '';
+  if (code === 'github_app_configuration_missing') return 'configuration_required';
+  if (code === 'github_app_permissions_exceed_read_only_policy' ||
+      code === 'github_app_required_read_permissions_missing' ||
+      code === 'github_app_permissions_invalid') return 'insufficient_permissions';
+  if (code === 'github_app_repository_scope_too_large_or_invalid' ||
+      code === 'github_app_no_repositories') return 'repository_scope_too_large';
+  if (code === 'github_app_connection_exists') return 'connection_exists';
+  if (code === 'github_app_installation_unavailable' ||
+      code === 'github_app_installation_suspended') return 'installation_unavailable';
+  if (code === 'github_app_persistence_failed') return 'persistence_failed';
+  return 'failed';
+}
+
 function appendAuditEvent(
   actorUserId: string, action: string, resourceType: string, resourceId: string,
   fields: { targetUserId?: string; role?: string } = {}
@@ -1583,6 +1821,256 @@ export const handler = router({
       } catch {
         console.warn('github_pat_file_write_failed');
         return error('GitHub file update did not complete cleanly. Refresh the file before retrying; no credentials were returned.', 502);
+      }
+    },
+  ],
+
+  'GET /api/integrations/github-app/status': [
+    requireAuth(),
+    async ctx => {
+      let connection: GitHubAppConnection | undefined;
+      try {
+        const [saved] = await db.get<GitHubAppConnection>(
+          'github_app_connections', [githubAppConnectionId(ctx.user!.userId)], { consistent: true }
+        );
+        connection = saved;
+      } catch {
+        return error('GitHub App connection status could not be loaded safely.', 503);
+      }
+      const config = await readGitHubAppConfig();
+      if (!config) {
+        return json({
+          configured: false,
+          connected: false,
+          hasConnectionRecord: Boolean(connection),
+          callbackUrl: GITHUB_APP_CALLBACK_URL,
+          requiredSecrets: [GITHUB_APP_ID_SECRET, GITHUB_APP_SLUG_SECRET, GITHUB_APP_PRIVATE_KEY_SECRET],
+          requiredPermissions: { metadata: 'read', contents: 'read', issues: 'read', pull_requests: 'read' },
+          message: 'GitHub App installation is not configured. Add the required values through AppDeploy secure backend-secret entry.',
+        });
+      }
+      if (!connection) {
+        return json({
+          configured: true,
+          connected: false,
+          hasConnectionRecord: false,
+          callbackUrl: GITHUB_APP_CALLBACK_URL,
+          requiredPermissions: { metadata: 'read', contents: 'read', issues: 'read', pull_requests: 'read' },
+          message: 'Install the GitHub App on only the repositories you want ContribQuest to access.',
+        });
+      }
+      try {
+        const snapshot = await verifyGitHubAppInstallation(config, connection.installationId);
+        if (snapshot.accountId !== connection.accountId ||
+            snapshot.accountLogin.toLowerCase() !== connection.accountLogin.toLowerCase()) {
+          return json({
+            configured: true,
+            connected: false,
+            hasConnectionRecord: true,
+            installationId: connection.installationId,
+            message: 'GitHub returned a different installation account. Repository access remains disabled; disconnect and re-link the intended installation.',
+          });
+        }
+        return json({
+          configured: true,
+          connected: true,
+          hasConnectionRecord: true,
+          installationId: snapshot.installationId,
+          account: { id: snapshot.accountId, login: snapshot.accountLogin, type: snapshot.accountType },
+          permissions: snapshot.permissions,
+          repositoryCount: snapshot.repositories.length,
+          repositories: snapshot.repositories,
+          connectedAt: connection.connectedAt,
+          lastVerifiedAt: new Date().toISOString(),
+          message: 'Installation verified with read-only permissions. Repository metadata is fresh; no installation token is stored.',
+        });
+      } catch (cause: unknown) {
+        const status = githubAppCallbackFailureStatus(cause);
+        console.warn('github_app_installation_status_unavailable', { status });
+        return json({
+          configured: true,
+          connected: false,
+          hasConnectionRecord: true,
+          installationId: connection.installationId,
+          message: status === 'insufficient_permissions'
+            ? 'The installation permissions are not compatible with the read-only policy. Change the GitHub App permissions and reconnect.'
+            : 'The GitHub App installation could not be verified. Uninstallation, revocation, or an API failure disables repository access until re-verified.',
+        });
+      }
+    },
+  ],
+
+  'POST /api/integrations/github-app/start': [
+    requireAuth(),
+    async ctx => {
+      const config = await readGitHubAppConfig();
+      if (!config) {
+        return error(
+          'GitHub App installation is not configured. Set GITHUB_APP_ID, GITHUB_APP_SLUG, and GITHUB_APP_PRIVATE_KEY through AppDeploy secure backend-secret entry.',
+          503,
+        );
+      }
+      try {
+        const connectionId = githubAppConnectionId(ctx.user!.userId);
+        const [existing] = await db.get<GitHubAppConnection>(
+          'github_app_connections', [connectionId], { consistent: true }
+        );
+        if (existing) {
+          return error('A GitHub App installation record already exists. Inspect its status and disconnect it before linking a replacement.', 409);
+        }
+        const state = randomUUID();
+        const createdAt = new Date();
+        const expiresAt = new Date(createdAt.getTime() + 10 * 60 * 1000).toISOString();
+        const [savedId] = await db.tx.add('github_app_install_states', [{
+          id: state,
+          appUserId: ctx.user!.userId,
+          purpose: 'installation',
+          status: 'pending',
+          createdAt: createdAt.toISOString(),
+          expiresAt,
+        }]);
+        if (!savedId) return error('A secure one-time GitHub App installation state could not be saved.', 503);
+        const setupUrl = new URL('https://github.com/apps/' + config.slug + '/installations/new');
+        setupUrl.searchParams.set('state', state);
+        return json({
+          setupUrl: setupUrl.toString(),
+          callbackUrl: GITHUB_APP_CALLBACK_URL,
+          expiresAt,
+          requiredPermissions: { metadata: 'read', contents: 'read', issues: 'read', pull_requests: 'read' },
+        });
+      } catch {
+        console.warn('github_app_installation_start_failed');
+        return error('ContribQuest could not prepare GitHub App installation. Check app configuration and retry.', 503);
+      }
+    },
+  ],
+
+  'GET /api/integrations/github-app/callback': [
+    async ctx => {
+      const state = ctx.query.state;
+      const installationValue = ctx.query.installation_id;
+      const setupAction = ctx.query.setup_action;
+      if (typeof state !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(state)) {
+        return githubAppSetupRedirect('state_invalid');
+      }
+
+      let savedState: GitHubAppInstallState | undefined;
+      try {
+        const [saved] = await db.get<GitHubAppInstallState>('github_app_install_states', [state], { consistent: true });
+        savedState = saved;
+      } catch {
+        return githubAppSetupRedirect('failed');
+      }
+      if (!savedState || savedState.purpose !== 'installation' || savedState.status !== 'pending' ||
+          new Date(savedState.expiresAt).getTime() <= Date.now()) {
+        return githubAppSetupRedirect('state_invalid');
+      }
+      if (setupAction === 'cancel') {
+        try {
+          const [cancelled] = await db.tx.update('github_app_install_states', [{
+            id: state,
+            record: { status: 'cancelled' },
+            if: { status: 'pending', appUserId: savedState.appUserId },
+          }], { patch: true });
+          return githubAppSetupRedirect(cancelled ? 'cancelled' : 'state_invalid');
+        } catch {
+          return githubAppSetupRedirect('failed');
+        }
+      }
+      if ((setupAction !== 'install' && setupAction !== 'update') ||
+          typeof installationValue !== 'string' ||
+          !/^[1-9][0-9]{0,15}$/.test(installationValue) ||
+          !Number.isSafeInteger(Number(installationValue))) {
+        return githubAppSetupRedirect('state_invalid');
+      }
+
+      const [claimed] = await db.tx.update('github_app_install_states', [{
+        id: state,
+        record: { status: 'processing' },
+        if: { status: 'pending', appUserId: savedState.appUserId },
+      }], { patch: true }).catch(() => [null]);
+      if (!claimed) return githubAppSetupRedirect('state_invalid');
+
+      let stage = 'configuration';
+      try {
+        const config = await readGitHubAppConfig();
+        if (!config) throw new Error('github_app_configuration_missing');
+        stage = 'installation_verification';
+        const snapshot = await verifyGitHubAppInstallation(config, Number(installationValue));
+        stage = 'connection_check';
+        const connectionId = githubAppConnectionId(savedState.appUserId);
+        const [existing] = await db.get<GitHubAppConnection>(
+          'github_app_connections', [connectionId], { consistent: true }
+        );
+        if (existing) throw new Error('github_app_connection_exists');
+        stage = 'persistence';
+        const now = new Date().toISOString();
+        const connection: GitHubAppConnection = {
+          id: connectionId,
+          appUserId: savedState.appUserId,
+          installationId: snapshot.installationId,
+          accountId: snapshot.accountId,
+          accountLogin: snapshot.accountLogin,
+          accountType: snapshot.accountType,
+          repositoryIds: snapshot.repositories.map(item => item.id),
+          repositoryNames: snapshot.repositories.map(item => item.fullName),
+          permissions: snapshot.permissions,
+          connectedAt: now,
+          lastVerifiedAt: now,
+        };
+        const [connectionIds, stateIds, auditIds] = await db.transact([
+          db.tx.add('github_app_connections', [connection]),
+          db.tx.update('github_app_install_states', [{
+            id: state,
+            record: { status: 'consumed' },
+            if: { status: 'processing', appUserId: savedState.appUserId },
+          }], { patch: true }),
+          db.tx.add('audit_events', [
+            appendAuditEvent(savedState.appUserId, 'github_app.installation_connected', 'github_app_installation', String(snapshot.installationId)),
+          ]),
+        ]);
+        if (!connectionIds?.[0] || !stateIds?.[0] || !auditIds?.[0]) {
+          throw new Error('github_app_persistence_failed');
+        }
+        return githubAppSetupRedirect('linked');
+      } catch (cause: unknown) {
+        const status = githubAppCallbackFailureStatus(cause);
+        console.warn('github_app_setup_failed', { stage, status });
+        await db.tx.update('github_app_install_states', [{
+          id: state,
+          record: { status: 'failed' },
+          if: { status: 'processing', appUserId: savedState.appUserId },
+        }], { patch: true }).catch(() => []);
+        return githubAppSetupRedirect(status);
+      }
+    },
+  ],
+
+  'POST /api/integrations/github-app/disconnect': [
+    requireAuth(),
+    async ctx => {
+      const user = ctx.user!;
+      const connectionId = githubAppConnectionId(user.userId);
+      let connection: GitHubAppConnection | undefined;
+      try {
+        const [saved] = await db.get<GitHubAppConnection>('github_app_connections', [connectionId], { consistent: true });
+        connection = saved;
+      } catch {
+        return error('GitHub App connection could not be loaded safely.', 503);
+      }
+      if (!connection) return json({ disconnected: false });
+      try {
+        await db.transact([
+          db.tx.delete('github_app_connections', [connectionId]),
+          db.tx.add('audit_events', [
+            appendAuditEvent(user.userId, 'github_app.installation_disconnected', 'github_app_installation', String(connection.installationId)),
+          ]),
+        ]);
+        return json({ disconnected: true });
+      } catch {
+        console.warn('github_app_disconnect_failed');
+        return error('GitHub App disconnection could not be confirmed. Refresh and check account integrations.', 503);
       }
     },
   ],

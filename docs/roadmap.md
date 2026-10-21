@@ -17,7 +17,9 @@ Priorities are ordered by risk reduction, not by feature visibility.
 - [x] Document GitHub App, MCP, database, secret-management, and authorization boundaries.
 - [ ] Register a GitHub App with minimal read permissions; configure callback and secrets through the secure secret flow.
 - [x] Implement one-time-state GitHub identity linking to the existing application account; use the temporary token only to verify identity and do not persist it.
-- [ ] Implement GitHub App installation verification, selected-repository linking, permission display, read-only repository sync, and revocation behavior.
+- [x] Add a proposal-branch GitHub App installation handshake with one-time state, exact App ID verification, read-only permission enforcement, per-account connection records, live selected-repository listing, and disconnect.
+- [ ] Configure the registered GitHub App and secure AppDeploy secrets; test the installation flow against selected pilot repositories.
+- [ ] Add read-only repository content sync, explicit repository-to-project mappings, and runtime uninstall/revocation tests.
 - [x] Replace broad global scans used by authenticated `/api/my-work` with per-user scoped lookup tables and bounded legacy migration.
 - [x] Add initial workspace/project-membership records, role assignment/removal routes, server-side admin checks, and audit events.
 - [ ] Enforce explicit project membership on every protected bounty/contribution/read/mutation route and add negative cross-project authorization tests before unrelated projects are onboarded.
@@ -93,3 +95,10 @@ Handover evidence to collect before changing this status:
 - [ ] An explicit handover decision recorded before the central repository is initialized or used.
 
 These are unchecked readiness requirements, not claims about existing implementation. Until the gate passes, continue working in the current `Loofy147` repositories.
+
+
+## GitHub App installation proposal — setup blocker
+
+The implementation is drafted on `feat/github-app-installation`; it is not deployed or verified against a registered GitHub App. Required backend secrets are `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY`. Configure the GitHub App Setup URL to `https://contribquest-lygj1x.v2.appdeploy.ai/api/integrations/github-app/callback`, while retaining the separate User authorization callback for identity-linking OAuth.
+
+The app must grant only Metadata: Read, Contents: Read, Issues: Read, and Pull requests: Read. The current first increment allows 1–100 selected repositories, checks live installation access on status requests, and never stores installation tokens. Do not mark Issue #5 complete until secrets are configured through the secure platform flow, GitHub app installation is tested, and uninstall/revocation is proven to stop repository access.

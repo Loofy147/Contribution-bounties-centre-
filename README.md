@@ -32,6 +32,7 @@ Acceptance currently grants 50 platform XP and increments an accepted-work count
 - [Acceptance protocol](docs/acceptance-protocol.md)
 - [Engineering decisions](docs/decisions.md)
 - [Roadmap and verification gates](docs/roadmap.md)
+- [GitHub App installation contract](docs/GITHUB_APP_INSTALLATION.md)
 - [CI/CD pipeline and release readiness](docs/ci-cd-pipeline.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security reporting](SECURITY.md)
