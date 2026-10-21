@@ -52,6 +52,6 @@ The AppDeploy test manifest at tests/tests.json describes five consolidated brow
 4. Exercise the Project 0 contribution ledger against real founder work, including URL linkage, evidence quality, risk gates, and exactly-once XP behavior. Standard/high-risk and sensitive work remain provisional until a real independent-review or automated-check workflow is implemented; continue using GitHub issues/PRs and inspectable evidence for that work.
 5. Address evidence uploads, notifications, payout controls, abuse resistance, and operational monitoring before making production-readiness claims.
 
-## License
+## License status
 
-No license has been selected. Public visibility does not by itself grant permission to reuse, modify, or redistribute this code. Do not treat this repository as open-source licensed until the project owner chooses and adds a license.
+The `main` branch remains unlicensed today. This review branch proposes the [GNU Affero General Public License v3.0 or later](LICENSE); the proposal is not effective on `main` unless an authorized maintainer approves and merges it. Before merge, confirm first-party ownership and file provenance. The proposed license does not license AppDeploy's platform, `@appdeploy/sdk`, `@appdeploy/client`, or any third-party dependency or asset. See [license scope and required pre-merge checks](docs/LICENSE_SCOPE.md).

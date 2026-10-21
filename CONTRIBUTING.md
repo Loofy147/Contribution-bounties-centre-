@@ -15,7 +15,11 @@ Contributions should improve verified outcomes, reliability, security, usability
 
 The checked-in source imports AppDeploy-provided @appdeploy/client and @appdeploy/sdk packages, which are absent from package.json. A standalone install/build path is not yet verified. Do not report a successful standalone build until those dependencies are resolved and the command has actually run.
 
-The repository-level static test can be run with: node --test tests/repository-contract.test.mjs
+The repository-level static test can be run with: `node --test tests/repository-contract.test.mjs`.
+
+## Proposed license (review branch only)
+
+This branch proposes AGPL-3.0-or-later for first-party application source. The proposal is not effective on `main` unless merged. Do not submit copied code, platform SDKs, third-party assets, secrets, real user data, or material whose origin/permission is unclear. Before accepting external contributions, maintainers must confirm they can license the existing code under the selected terms and decide the contribution attestation policy. See [license scope](docs/LICENSE_SCOPE.md).
 
 This test does not launch the app or exercise the deployed backend.
 
