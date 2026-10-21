@@ -41,7 +41,7 @@
 | `GET /api/leaderboard` | Public reputation summary | Response now explicitly projects only display name, XP and accepted count |
 | `POST /api/bounties` | Any authenticated account may publish a global listing | Bounty creator is set from the authenticated session; server validates all input |
 | `POST /api/bounties/:id/submit` | Authenticated contributor; not listing owner | Requires an open non-sample bounty, blocks self-submission, applies paid eligibility and uses active-submission guard |
-| `GET /api/my-work` | Authenticated account's private work | Reads the caller's own bounty, submission, received-work and profile partitions |
+| `GET /api/my-work` | Authenticated account's private work | Initial and continuation pages read only caller-derived bounty, submission, and received-review partitions. Each page is capped at 100; continuation sections are allowlisted and tokens are never used to choose a user or table. |
 | `POST /api/contributions/:id/resubmit` | Original contributor only | Requires submitter ID match, `needs_changes` state and open bounty; conditional updates retain that ownership condition |
 | `POST /api/contributions/:id/review` | Bounty owner only | Requires owner ID match, pending state, checklist length match; acceptance requires every criterion to pass |
 
@@ -51,6 +51,8 @@
 - All session-protected routes must contain `requireAuth()`.
 - Explicit tests for workspace role/admin boundaries, GitHub PAT owner-only and repository allowlist guards, OAuth/device-flow identity/state binding, personal-ledger indexing, submission ownership, resubmission ownership, and bounty-owner review.
 - Explicit source-contract tests for sanitized public bounty and leaderboard projections.
+- Proposal-branch tests assert `GET /api/my-work` continuation pages use only the authenticated user's partitions, a three-section allowlist, cursor-size limits, and bounded page sizes.
+- The UI exposes load-more actions for owned bounties, submitted contributions, and received submissions, merging results by record ID to avoid duplicates.
 
 ## Remaining acceptance work
 
@@ -58,3 +60,10 @@
 - Deploy the privacy projection fix only after the branch is accepted; then confirm public response shapes through the live app.
 - Exercise negative authorization cases with two independent test accounts in a safe test environment. Static source checks alone cannot prove that unauthorized requests return the correct HTTP status and no private data.
 - Decide separately whether any future bounty/workspace product must be workspace-private. This branch preserves the current global marketplace behavior.
+
+
+## Work-list pagination proposal
+
+The `fix/my-work-pagination` branch adds a cursor continuation mode to the existing authenticated `GET /api/my-work` route. It does not add a new data source or use client-supplied user/project identifiers. The selected table is always derived from `ctx.user.userId`; a query parameter selects only one of three approved list categories. Each request remains bounded at 100 rows, rejects malformed/oversized cursors, and returns the next cursor for the same list.
+
+The UI can request additional pages for each personal index and merges by stable record ID. A cursor request fails closed while the legacy index migration is incomplete. This is an application/API pagination improvement, **not database-native row-level security** and not a live two-account isolation certification. Merge remains gated on CI and safe AppDeploy verification.

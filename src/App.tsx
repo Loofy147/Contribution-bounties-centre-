@@ -98,6 +98,7 @@ type CurrentUser = {
   picture?: string;
 };
 type Profile = { displayName?: string; xp: number; acceptedCount: number };
+type WorkPageSection = 'myBounties' | 'mySubmissions' | 'receivedSubmissions';
 type WorkData = {
   profile: Profile;
   mySubmissions: Contribution[];
@@ -106,6 +107,7 @@ type WorkData = {
   indexing?: boolean;
   indexProgress?: { bountiesDone: boolean; contributionsDone: boolean };
   hasMore?: { myBounties: boolean; mySubmissions: boolean; receivedSubmissions: boolean };
+  pageTokens?: Record<WorkPageSection, string | null>;
 };
 type WorkspaceMembership = {
   id: string; workspaceId: string; workspaceName: string; userId: string;
@@ -196,6 +198,12 @@ function acceptanceCriteriaFor(item: { acceptanceCriteria?: string[] }) {
     : DEFAULT_ACCEPTANCE_CRITERIA;
 }
 
+function mergeById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+  const merged = new Map(existing.map(item => [item.id, item]));
+  for (const item of incoming) merged.set(item.id, item);
+  return Array.from(merged.values());
+}
+
 const money = (amount: number) =>
   new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -242,6 +250,11 @@ function App() {
   const [work, setWork] = useState<WorkData>(EMPTY_WORK);
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState<Record<WorkPageSection, boolean>>({
+    myBounties: false,
+    mySubmissions: false,
+    receivedSubmissions: false,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -339,6 +352,69 @@ function App() {
       setError(errorText(err));
     } finally {
       if (showSpinner) setLoading(false);
+    }
+  };
+
+  const loadMoreWork = async (section: WorkPageSection) => {
+    const cursor = work.pageTokens?.[section];
+    if (!cursor || pageLoading[section] || work.indexing) return;
+    setPageLoading(current => ({ ...current, [section]: true }));
+    setError('');
+    try {
+      const response = await api.get(
+        '/api/my-work?section=' + section + '&cursor=' + encodeURIComponent(cursor),
+      );
+      const page = response.data as {
+        section?: string;
+        items?: Array<Bounty | Contribution>;
+        nextToken?: string | null;
+      };
+      if (page.section !== section || !Array.isArray(page.items)) {
+        throw new Error('The work-list page response was invalid. Refresh and retry.');
+      }
+      const nextToken = typeof page.nextToken === 'string' && page.nextToken
+        ? page.nextToken
+        : null;
+      setWork(current => {
+        const pageTokens = {
+          myBounties: current.pageTokens?.myBounties ?? null,
+          mySubmissions: current.pageTokens?.mySubmissions ?? null,
+          receivedSubmissions: current.pageTokens?.receivedSubmissions ?? null,
+          [section]: nextToken,
+        };
+        const hasMore = {
+          myBounties: Boolean(current.hasMore?.myBounties),
+          mySubmissions: Boolean(current.hasMore?.mySubmissions),
+          receivedSubmissions: Boolean(current.hasMore?.receivedSubmissions),
+          [section]: Boolean(nextToken),
+        };
+        if (section === 'myBounties') {
+          return {
+            ...current,
+            myBounties: mergeById(current.myBounties, page.items as Bounty[]),
+            pageTokens,
+            hasMore,
+          };
+        }
+        if (section === 'mySubmissions') {
+          return {
+            ...current,
+            mySubmissions: mergeById(current.mySubmissions, page.items as Contribution[]),
+            pageTokens,
+            hasMore,
+          };
+        }
+        return {
+          ...current,
+          receivedSubmissions: mergeById(current.receivedSubmissions, page.items as Contribution[]),
+          pageTokens,
+          hasMore,
+        };
+      });
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setPageLoading(current => ({ ...current, [section]: false }));
     }
   };
 
@@ -1412,6 +1488,18 @@ function App() {
               </article>
             ))}
           </div>
+          {work.hasMore?.mySubmissions && (
+            <div className="pagination-controls">
+              <button
+                type="button"
+                className="button button-muted"
+                disabled={pageLoading.mySubmissions || Boolean(work.indexing)}
+                onClick={() => void loadMoreWork('mySubmissions')}
+              >
+                {pageLoading.mySubmissions ? 'Loading contributions…' : 'Load more contributions'}
+              </button>
+            </div>
+          )}
         </>
       )}
     </>
@@ -1468,6 +1556,18 @@ function App() {
               </strong>
             </div>
           </div>
+          {work.hasMore?.myBounties && (
+            <div className="pagination-controls">
+              <button
+                type="button"
+                className="button button-muted"
+                disabled={pageLoading.myBounties || Boolean(work.indexing)}
+                onClick={() => void loadMoreWork('myBounties')}
+              >
+                {pageLoading.myBounties ? 'Loading bounties…' : 'Load more of your bounties'}
+              </button>
+            </div>
+          )}
           {work.myBounties.length === 0 && (
             <div className="empty-state compact">
               <h3>Publish your first bounty</h3>
@@ -1601,6 +1701,18 @@ function App() {
               ) : null}
             </article>
           ))}
+          {work.hasMore?.receivedSubmissions && (
+            <div className="pagination-controls">
+              <button
+                type="button"
+                className="button button-muted"
+                disabled={pageLoading.receivedSubmissions || Boolean(work.indexing)}
+                onClick={() => void loadMoreWork('receivedSubmissions')}
+              >
+                {pageLoading.receivedSubmissions ? 'Loading reviews…' : 'Load more submissions to review'}
+              </button>
+            </div>
+          )}
         </>
       )}
     </>
