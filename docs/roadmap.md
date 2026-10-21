@@ -93,3 +93,12 @@ Handover evidence to collect before changing this status:
 - [ ] An explicit handover decision recorded before the central repository is initialized or used.
 
 These are unchecked readiness requirements, not claims about existing implementation. Until the gate passes, continue working in the current `Loofy147` repositories.
+
+
+## P0 continuation — bounded private work-list pagination
+
+- [x] Add a continuation mode to authenticated `GET /api/my-work` for the three user-derived work indexes; all pages remain capped at 100 rows.
+- [x] Add UI load-more controls for own bounties, submitted contributions, and received submissions; merge pages by record ID.
+- [x] Reject unknown list sections and malformed/oversized cursors; do not accept a client-supplied user/table selector.
+- [ ] Validate the proposal branch with repository-contract, TypeScript/build, CodeQL and secret-scanning workflows.
+- [ ] Exercise two-account read isolation and cursor handling in a safe AppDeploy environment before merge; do not describe this as database-native RLS.

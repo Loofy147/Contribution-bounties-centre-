@@ -2304,3 +2304,12 @@ a {
 .role-matrix{grid-template-columns:minmax(0,1fr)}.settings-inline-form{grid-template-columns:minmax(0,1fr)}
 .settings-member-row{align-items:flex-start;flex-wrap:wrap}.settings-member-row>div{flex-basis:calc(100% - 4px)}
 }
+
+.pagination-controls {
+  display: flex;
+  justify-content: flex-start;
+  margin: 16px 0 24px;
+}
+.pagination-controls .button {
+  min-width: 190px;
+}

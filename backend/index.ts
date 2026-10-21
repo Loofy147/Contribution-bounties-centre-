@@ -1058,6 +1058,11 @@ async function executeMcpTool(name: string, args: Record<string, unknown>): Prom
           mySubmissions: Boolean(submissionResult.nextToken),
           receivedSubmissions: Boolean(receivedResult.nextToken),
         },
+        pageTokens: {
+          myBounties: bountyResult.nextToken ?? null,
+          mySubmissions: submissionResult.nextToken ?? null,
+          receivedSubmissions: receivedResult.nextToken ?? null,
+        },
       });
     }
 
@@ -2456,6 +2461,55 @@ export const handler = router({
     async ctx => {
       const user = ctx.user!;
       const migration = await advanceWorkIndexMigration(user.userId);
+      const requestedSection = ctx.query.section;
+      if (requestedSection !== undefined) {
+        const allowedSections = ['myBounties', 'mySubmissions', 'receivedSubmissions'] as const;
+        if (typeof requestedSection !== 'string' ||
+            !allowedSections.includes(requestedSection as typeof allowedSections[number])) {
+          return error('Choose a valid work-list section.', 400);
+        }
+        const rawCursor = ctx.query.cursor;
+        if (rawCursor !== undefined &&
+            (typeof rawCursor !== 'string' || rawCursor.length === 0 || rawCursor.length > 8192)) {
+          return error('The work-list cursor is invalid. Refresh the list and retry.', 400);
+        }
+        if (!(migration.bountiesDone && migration.contributionsDone)) {
+          return error('Your existing work is still being indexed. Refresh the work list before loading another page.', 409);
+        }
+
+        const cursor = typeof rawCursor === 'string' ? rawCursor : undefined;
+        const pageOptions = cursor ? { limit: 100, nextToken: cursor } : { limit: 100 };
+        try {
+          if (requestedSection === 'myBounties') {
+            const result = await db.list<Bounty>(userBountiesTable(user.userId), pageOptions);
+            return json({
+              section: requestedSection,
+              items: result.items,
+              nextToken: result.nextToken ?? null,
+              hasMore: Boolean(result.nextToken),
+            });
+          }
+          if (requestedSection === 'mySubmissions') {
+            const result = await db.list<Contribution>(userSubmissionsTable(user.userId), pageOptions);
+            return json({
+              section: requestedSection,
+              items: result.items,
+              nextToken: result.nextToken ?? null,
+              hasMore: Boolean(result.nextToken),
+            });
+          }
+          const result = await db.list<Contribution>(userReceivedTable(user.userId), pageOptions);
+          return json({
+            section: requestedSection,
+            items: result.items,
+            nextToken: result.nextToken ?? null,
+            hasMore: Boolean(result.nextToken),
+          });
+        } catch {
+          return error('Unable to load this work-list page. Refresh the list and retry.', 503);
+        }
+      }
+
       const [bountyResult, submissionResult, receivedResult, profileResult] =
         await Promise.all([
           db.list<Bounty>(userBountiesTable(user.userId), { limit: 100 }),

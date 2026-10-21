@@ -183,6 +183,9 @@ test('authenticated work views use private per-user indexes and bounded legacy m
   assert.ok(myWorkRoute.includes('userBountiesTable(user.userId)'));
   assert.ok(myWorkRoute.includes('userSubmissionsTable(user.userId)'));
   assert.ok(myWorkRoute.includes('userReceivedTable(user.userId)'));
+  assert.ok(myWorkRoute.includes('pageTokens:'));
+  assert.ok(myWorkRoute.includes('ctx.query.section'));
+  assert.ok(myWorkRoute.includes('ctx.query.cursor'));
   assert.equal(myWorkRoute.includes("db.list<Bounty>('bounties'"), false);
   assert.equal(myWorkRoute.includes("db.list<Contribution>('contributions'"), false);
   assert.ok(myWorkRoute.includes('indexing: !(migration.bountiesDone && migration.contributionsDone)'));
@@ -612,4 +615,30 @@ test('public bounty and leaderboard responses use explicit allowlisted projectio
     /work\.myBounties\.some\(ownedBounty => ownedBounty\.id === item\.id\)/,
     'owner-only UI affordances should derive from the signed-in user’s private work view',
   );
+});
+
+
+test('my-work continuation pages stay on the authenticated user partition and remain bounded', () => {
+  const myWork = routeSourceForTest('GET /api/my-work');
+  assert.match(myWork, /allowedSections = \['myBounties', 'mySubmissions', 'receivedSubmissions'\]/);
+  assert.match(myWork, /rawCursor\.length > 8192/);
+  assert.match(myWork, /if \(!\(migration\.bountiesDone && migration\.contributionsDone\)\)/);
+  assert.match(myWork, /db\.list<Bounty>\(userBountiesTable\(user\.userId\), pageOptions\)/);
+  assert.match(myWork, /db\.list<Contribution>\(userSubmissionsTable\(user\.userId\), pageOptions\)/);
+  assert.match(myWork, /db\.list<Contribution>\(userReceivedTable\(user\.userId\), pageOptions\)/);
+  assert.match(myWork, /limit: 100/);
+  assert.equal(myWork.includes('ctx.query.userId'), false);
+  assert.equal(myWork.includes('ctx.query.workspaceId'), false);
+});
+
+test('my-work UI exposes cursor pagination for each personal index and merges pages by record ID', () => {
+  assert.match(frontend, /type WorkPageSection = 'myBounties' \| 'mySubmissions' \| 'receivedSubmissions'/);
+  assert.match(frontend, /api\.get\([\s\S]*\/api\/my-work\?section=/);
+  assert.match(frontend, /encodeURIComponent\(cursor\)/);
+  assert.match(frontend, /mergeById\(current\.myBounties, page\.items as Bounty\[\]\)/);
+  assert.match(frontend, /mergeById\(current\.mySubmissions, page\.items as Contribution\[\]\)/);
+  assert.match(frontend, /mergeById\(current\.receivedSubmissions, page\.items as Contribution\[\]\)/);
+  assert.match(frontend, /Load more contributions/);
+  assert.match(frontend, /Load more of your bounties/);
+  assert.match(frontend, /Load more submissions to review/);
 });
