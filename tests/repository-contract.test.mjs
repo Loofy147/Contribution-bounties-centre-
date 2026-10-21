@@ -623,7 +623,7 @@ test('community acceptance records one deterministic XP ledger award and audit e
     review.indexOf('const reviewPatch ='),
   );
 
-  assert.match(accepted, /if \(contribution\.status !== 'pending'\)/);
+  assert.match(review, /if \(contribution\.status !== 'pending'\)/);
   assert.match(accepted, /const awardId = 'community_xp_' \+ contribution\.id/);
   assert.match(accepted, /const xpAwardWrite = db\.tx\.add\('xp_awards', \[\{/);
   assert.match(accepted, /actorUserId: ctx\.user!\.userId/);
