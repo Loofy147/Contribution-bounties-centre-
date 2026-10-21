@@ -22,7 +22,7 @@ Priorities are ordered by risk reduction, not by feature visibility.
 - [x] Add initial workspace/project-membership records, role assignment/removal routes, server-side admin checks, and audit events.
 - [ ] Enforce explicit project membership on every protected bounty/contribution/read/mutation route and add negative cross-project authorization tests before unrelated projects are onboarded.
 
-- [ ] Define an append-only audit/event contract and idempotent XP ledger/replay handling.
+- [ ] Define an append-only audit/event contract and idempotent XP ledger/replay handling. The proposed branch adds deterministic community XP award IDs and audit events to atomic submission/revision/review transactions; merge and runtime verification remain pending.
 - [ ] Specify MCP tool schemas and authorization. Implement read-only tools only after shared domain services and project scope checks exist.
 - [ ] Verify secrets are never exposed in frontend bundles, ordinary records, API responses, or logs.
 

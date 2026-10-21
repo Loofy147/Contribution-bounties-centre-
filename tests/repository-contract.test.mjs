@@ -613,3 +613,70 @@ test('public bounty and leaderboard responses use explicit allowlisted projectio
     'owner-only UI affordances should derive from the signed-in user’s private work view',
   );
 });
+
+
+
+test('community acceptance records one deterministic XP ledger award and audit event atomically', () => {
+  const review = routeSourceForTest('POST /api/contributions/:id/review');
+  const accepted = review.slice(
+    review.indexOf("if (status === 'accepted')"),
+    review.indexOf('const reviewPatch ='),
+  );
+
+  assert.match(accepted, /if \(contribution\.status !== 'pending'\)/);
+  assert.match(accepted, /const awardId = 'community_xp_' \+ contribution\.id/);
+  assert.match(accepted, /const xpAwardWrite = db\.tx\.add\('xp_awards', \[\{/);
+  assert.match(accepted, /actorUserId: ctx\.user!\.userId/);
+  assert.match(accepted, /contributionRevision: contribution\.revisionNumber \?\? 1/);
+  assert.match(accepted, /ruleVersion: 'community-review-v1'/);
+  assert.match(accepted, /verificationLevel: 'independently_reviewed'/);
+  assert.match(accepted, /const auditWrite = db\.tx\.add\('audit_events'/);
+  assert.match(accepted, /'contribution\.review\.accepted'/);
+
+  const transactAt = accepted.indexOf('await db.transact([');
+  const transaction = accepted.slice(transactAt, accepted.indexOf(']);', transactAt) + 3);
+  for (const required of [
+    'contributionUpdate',
+    'submitterIndexUpdate',
+    'ownerIndexUpdate',
+    'bountyUpdate',
+    'profileUpdate',
+    'guardDelete',
+    'xpAwardWrite',
+    'auditWrite',
+  ]) assert.ok(transaction.includes(required), 'acceptance transaction missing ' + required);
+
+  assert.match(accepted, /if \(saved\?\.status === 'accepted'\)/);
+  assert.match(accepted, /duplicate: true/);
+  assert.match(accepted, /No duplicate XP was awarded/);
+});
+
+test('submission, resubmission and every review decision append source-linked audit events in their state transaction', () => {
+  const submit = routeSourceForTest('POST /api/bounties/:id/submit');
+  assert.match(submit, /appendAuditEvent\(user\.userId, 'contribution\.submitted'/);
+  assert.match(submit, /decision: 'submitted'/);
+  assert.match(submit, /auditWrite/);
+  const submitAt = submit.indexOf('await db.transact([');
+  const submitTransaction = submit.slice(submitAt, submit.indexOf(']);', submitAt) + 3);
+  assert.ok(submitTransaction.includes('auditWrite'));
+
+  const resubmit = routeSourceForTest('POST /api/contributions/:id/resubmit');
+  assert.match(resubmit, /appendAuditEvent\(user\.userId, 'contribution\.resubmitted'/);
+  assert.match(resubmit, /revisionNumber/);
+  const resubmitAt = resubmit.indexOf('await db.transact([');
+  const resubmitTransaction = resubmit.slice(resubmitAt, resubmit.indexOf(']);', resubmitAt) + 3);
+  assert.match(resubmitTransaction, /db\.tx\.add\('audit_events'/);
+
+  const review = routeSourceForTest('POST /api/contributions/:id/review');
+  assert.match(review, /'contribution\.review\.' \+ status/);
+  assert.match(review, /decision: status/);
+  assert.match(review, /revisionNumber: contribution\.revisionNumber \?\? 1/);
+});
+
+test('audit events preserve revision and decision metadata while recent UI history remains bounded', () => {
+  assert.match(backend, /type AuditEvent = \{[\s\S]*decision\?: string; revisionNumber\?: number; ruleVersion\?: string/);
+  assert.match(backend, /fields: \{ targetUserId\?: string; role\?: string; decision\?: string; revisionNumber\?: number; ruleVersion\?: string \}/);
+  assert.match(backend, /const reviewHistory = \[\.\.\.\(contribution\.reviewHistory \?\? \[\]\), reviewEvent\]\.slice\(-20\)/);
+  assert.match(backend, /const revisionHistory = \[[\s\S]*\]\.slice\(-20\)/);
+  assert.ok(backend.includes("db.tx.add('audit_events'"));
+});
