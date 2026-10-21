@@ -57,3 +57,35 @@ jobs:
           path: package-lock.json
           if-no-files-found: error
           retention-days: 2
+
+  publish-lockfile:
+    name: Publish validated lockfile on proposal branch
+    needs: generate-and-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out current main into a clean worktree
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: repo
+          persist-credentials: true
+
+      - name: Download the validated lockfile only
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.1.8
+        with:
+          name: generated-package-lock
+          path: payload
+
+      - name: Create the lockfile proposal branch
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          test -s ../payload/package-lock.json
+          git switch --create build/reproducible-lockfile
+          cp ../payload/package-lock.json ./package-lock.json
+          git add package-lock.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "build: add lockfile generated and verified by Node 22 CI"
+          git push origin HEAD:refs/heads/build/reproducible-lockfile
