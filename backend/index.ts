@@ -1058,11 +1058,6 @@ async function executeMcpTool(name: string, args: Record<string, unknown>): Prom
           mySubmissions: Boolean(submissionResult.nextToken),
           receivedSubmissions: Boolean(receivedResult.nextToken),
         },
-        pageTokens: {
-          myBounties: bountyResult.nextToken ?? null,
-          mySubmissions: submissionResult.nextToken ?? null,
-          receivedSubmissions: receivedResult.nextToken ?? null,
-        },
       });
     }
 
@@ -2536,6 +2531,11 @@ export const handler = router({
           myBounties: Boolean(bountyResult.nextToken),
           mySubmissions: Boolean(submissionResult.nextToken),
           receivedSubmissions: Boolean(receivedResult.nextToken),
+        },
+        pageTokens: {
+          myBounties: bountyResult.nextToken ?? null,
+          mySubmissions: submissionResult.nextToken ?? null,
+          receivedSubmissions: receivedResult.nextToken ?? null,
         },
       });
     },
