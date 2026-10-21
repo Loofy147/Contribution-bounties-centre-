@@ -16,7 +16,7 @@ The two GitHub accounts are separate authorization boundaries. A connection or p
 
 This repository contains the deployed frontend, backend, configuration, and test manifest. The frontend uses React, Vite, TypeScript, and Lucide icons. Its backend imports the platform-provided @appdeploy/sdk; the frontend imports @appdeploy/client.
 
-**Runtime caveat:** these AppDeploy integration packages are not declared in the checked-in package.json. This source snapshot has not yet been demonstrated to build or run independently outside AppDeploy. Do not treat the source import as proof of a reproducible self-hosted deployment.
+**Runtime caveat:** the frontend dependency graph is being pinned with a lockfile and validated with `npm ci`, TypeScript, a local Vite validation build and artifact smoke checks. The AppDeploy-injected `@appdeploy/client` and `@appdeploy/sdk` are not standalone dependencies; the validation build intentionally leaves the client external. This does not prove the app can run or deploy independently outside AppDeploy.
 
 ## Product model
 

@@ -7,7 +7,7 @@
 
 | Workflow | Trigger | What it proves | What it does not prove |
 |---|---|---|---|
-| `.github/workflows/repository-contract.yml` | Pull request, push to main, manual | Static source/QA-manifest contract checks | Type-check, dependency installation, browser flow, live database, or deployment |
+| `.github/workflows/repository-contract.yml` | Pull request, push to main, manual | Locked npm install, TypeScript frontend check, local Vite build, artifact smoke test, and source/QA-manifest contract checks | AppDeploy backend runtime, live database, two-account browser flow, or deployment |
 | `.github/workflows/codeql.yml` | Pull request, push to main, weekly schedule, manual | CodeQL static analysis of JavaScript/TypeScript | Runtime authorization correctness, dependency exploitability, or end-to-end behavior |
 | `.github/workflows/secrets-scan.yml` | Pull request, push to main, weekly schedule, manual | Pinned Gitleaks v8.30.0 CLI scans full Git history with redacted output | Protection against secrets added outside covered refs or already leaked externally; revoke exposed credentials immediately |
 | Dependabot | Weekly schedule | Candidate updates for npm packages and GitHub Actions | That an update is compatible; update PRs still require CI and review |
@@ -16,18 +16,13 @@ All workflow actions are pinned to full commit SHAs. The exact release tags are 
 
 ## 2. Current build limitation
 
-The source snapshot imports AppDeploy-provided `@appdeploy/client` and `@appdeploy/sdk`, neither of which is declared in `package.json`. There is also no committed `package-lock.json`. The hosting platform supplies integration points that this repository cannot yet reproduce independently.
+The source snapshot imports AppDeploy-provided `@appdeploy/client` and `@appdeploy/sdk`, neither of which is declared in `package.json`; AppDeploy supplies those runtime integration points.
 
-The current contract job uses Node's built-in test runner and does not install packages. This is intentional: it makes the checks reproducible while avoiding a misleading claim that the standalone app builds.
+The current lockfile proposal adds `package-lock.json` (lockfile version 3) and switches CI to `npm ci --no-audit --no-fund`. A clean CI run has successfully executed lockfile generation, `npm ci`, TypeScript validation, the local Vite validation build, the artifact smoke test and the contract suite. The branch/PR still needs review before that lockfile and CI change becomes canonical.
 
-**Build acceptance is not yet met.** Before adding the clean-build job as a required passing check:
-1. decide and implement the supported adapter/runtime boundary for AppDeploy integrations;
-2. declare dependencies required for the chosen build path;
-3. generate and commit a reviewed lockfile;
-4. run `npm ci`, TypeScript validation and `npm run build` from a clean checkout;
-5. prove the produced artifact can be served/used in the intended target runtime.
+**Frontend toolchain gate: verified on the proposal branch. Full runtime acceptance is still open.** The current check proves the frontend dependencies are reproducible and the generated validation artifact is well formed. It does not resolve or simulate the injected AppDeploy runtime.
 
-Do not add no-op mocks that make compilation pass while changing production identity, persistence or authorization semantics.
+The remaining runtime decision is whether the initial supported target is AppDeploy-only or a fully supported local/self-hosted application. Do not add no-op mocks that change production identity, persistence or authorization semantics. A self-hosted path needs a real compatible adapter/runtime contract, backend persistence and auth behavior, and live integration verification before it can be claimed.
 
 ## 3. Required CI progression
 
