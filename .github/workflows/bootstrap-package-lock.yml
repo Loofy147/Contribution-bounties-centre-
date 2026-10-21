@@ -1,0 +1,59 @@
+name: Bootstrap package lockfile (temporary)
+
+on:
+  push:
+    branches:
+      - build/lockfile-bootstrap
+    paths:
+      - ".github/workflows/bootstrap-package-lock.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-lock-bootstrap
+  cancel-in-progress: true
+
+jobs:
+  generate-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Generate the npm lockfile without running dependency scripts
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Validate a clean locked install
+        run: npm ci --no-audit --no-fund
+
+      - name: Type-check frontend and AppDeploy client declarations
+        run: npx tsc --noEmit
+
+      - name: Build frontend with AppDeploy client kept external
+        run: APPDEPLOY_LOCAL_BUILD=true npm run build
+
+      - name: Smoke-test built frontend artifact
+        run: node scripts/smoke-build.mjs
+
+      - name: Validate repository contract
+        run: npm run test:contract
+
+      - name: Upload the generated lockfile
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: generated-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 2
