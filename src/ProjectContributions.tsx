@@ -10,6 +10,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { api } from '@appdeploy/client';
+import ProjectReviewQueue from './ProjectReviewQueue';
 import './ProjectContributions.css';
 
 type WorkType =
@@ -40,17 +41,41 @@ type ProjectContribution = {
   acceptanceCriteria: string[];
   criteriaChecks: boolean[];
   riskLevel: 'low' | 'standard' | 'high';
-  status: 'submitted' | 'accepted';
-  verificationLevel: 'provisional' | 'self_verified';
+  workspaceId?: string;
+  workspaceName?: string;
+  status: 'submitted' | 'needs_changes' | 'accepted' | 'rejected';
+  verificationLevel: 'provisional' | 'self_verified' | 'independently_verified';
   verificationNote?: string;
+  reviewFeedback?: string;
+  reviewHistory?: {
+    decision: 'accepted' | 'needs_changes' | 'rejected';
+    feedback: string;
+    reviewerName: string;
+    reviewedAt: string;
+    revisionNumber: number;
+  }[];
   reviewerName?: string;
+  revisionNumber?: number;
   xpAwarded: number;
   createdAt: string;
+  updatedAt: string;
   acceptedAt?: string;
+};
+type WorkspaceMembershipOption = {
+  workspaceId: string;
+  workspaceName: string;
+  role: 'workspace_admin' | 'reviewer' | 'contributor' | 'observer';
+};
+type ResubmitDraft = {
+  description: string;
+  workUrl: string;
+  evidenceUrl: string;
+  evidenceNote: string;
 };
 
 type CreateForm = {
   projectName: string;
+  workspaceId: string;
   workTitle: string;
   workType: WorkType;
   description: string;
@@ -84,6 +109,7 @@ const WORK_TYPES: { value: WorkType; label: string }[] = [
 
 const EMPTY_FORM: CreateForm = {
   projectName: 'Contribution Network',
+  workspaceId: '',
   workTitle: '',
   workType: 'architecture',
   description: '',
@@ -119,6 +145,8 @@ function formatDate(value: string): string {
 
 export default function ProjectContributions({ onUpdated }: { onUpdated?: () => void }) {
   const [items, setItems] = useState<ProjectContribution[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceMembershipOption[]>([]);
+  const [resubmitDrafts, setResubmitDrafts] = useState<Record<string, ResubmitDraft>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -143,8 +171,39 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
     void loadContributions();
   }, []);
 
+  useEffect(() => {
+    const loadWorkspaces = async () => {
+      try {
+        const response = await api.get('/api/workspaces');
+        const available = (response.data?.workspaces ?? []) as WorkspaceMembershipOption[];
+        setWorkspaces(available.filter(item => item.role !== 'observer'));
+      } catch {
+        setWorkspaces([]);
+      }
+    };
+    void loadWorkspaces();
+  }, []);
+
   const updateForm = (patch: Partial<CreateForm>) => {
     setForm(current => ({ ...current, ...patch }));
+  };
+
+  const openFounderContributionDraft = () => {
+    setForm({
+      ...EMPTY_FORM,
+      projectName: 'Contribution Network',
+      workTitle: 'Direct and validate the first-consumer contribution workflow',
+      workType: 'coordination',
+      description: 'Defined the Contribution Network first-consumer objective and scope, directed requirements and architecture reviews, challenged unresolved gaps, selected acceptance boundaries, reviewed release evidence, and authorized delivery of the initial contribution ledger. Implementation was AI-assisted under my direction; this record attributes product direction, review, and release management rather than claiming manual authorship of generated code.',
+      workUrl: 'https://github.com/Loofy147/Contribution-bounties-centre-/pull/19',
+      evidenceUrl: 'https://github.com/Loofy147/Contribution-bounties-centre-/blob/main/docs/founder-contribution-record.md',
+      evidenceNote: 'Inspect the merged ledger PR, the founder contribution evidence document, and the live ContribQuest prototype. This is a founder-attributed record of product direction and release work; it remains provisional until an authorized reviewer distinct from the contributor accepts it.',
+      acceptanceCriteria: 'The first-consumer contribution ledger and evidence-linked record workflow are present in the released application.\nProduct scope, review boundaries, and release decisions are traceable to repository changes.\nAttribution distinguishes founder direction and review from AI-assisted implementation.',
+      riskLevel: 'standard',
+    });
+    setFormOpen(true);
+    setErrorMessage('');
+    setNotice('');
   };
 
   const getDraft = (item: ProjectContribution): VerifyDraft =>
@@ -171,6 +230,7 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
     try {
       const payload = {
         ...form,
+        workspaceId: form.workspaceId || undefined,
         acceptanceCriteria: form.acceptanceCriteria
           .split('\n')
           .map(item => item.trim())
@@ -183,6 +243,48 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
       await loadContributions();
       onUpdated?.();
       setNotice(saved ? 'Contribution recorded and linked to your work evidence.' : 'Contribution recorded.');
+    } catch (error) {
+      setErrorMessage(messageFromError(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const getResubmitDraft = (item: ProjectContribution): ResubmitDraft =>
+    resubmitDrafts[item.id] ?? {
+      description: item.description,
+      workUrl: item.workUrl ?? '',
+      evidenceUrl: item.evidenceUrl ?? '',
+      evidenceNote: item.evidenceNote,
+    };
+
+  const updateResubmitDraft = (item: ProjectContribution, patch: Partial<ResubmitDraft>) => {
+    setResubmitDrafts(current => ({
+      ...current,
+      [item.id]: { ...getResubmitDraft(item), ...patch },
+    }));
+  };
+
+  const resubmitContribution = async (event: FormEvent<HTMLFormElement>, item: ProjectContribution) => {
+    event.preventDefault();
+    const draft = getResubmitDraft(item);
+    if (draft.description.trim().length < 30 || draft.evidenceNote.trim().length < 15) {
+      setErrorMessage('Update the delivery description and evidence note before resubmitting.');
+      return;
+    }
+    setSaving(true);
+    setErrorMessage('');
+    setNotice('');
+    try {
+      await api.post('/api/project-contributions/' + encodeURIComponent(item.id) + '/resubmit', {
+        description: draft.description,
+        workUrl: draft.workUrl,
+        evidenceUrl: draft.evidenceUrl,
+        evidenceNote: draft.evidenceNote,
+      });
+      await loadContributions();
+      onUpdated?.();
+      setNotice('Revision resubmitted to the workspace review queue. Previous review history is preserved.');
     } catch (error) {
       setErrorMessage(messageFromError(error));
     } finally {
@@ -220,7 +322,7 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
 
   const totalXp = items.reduce((total, item) => total + (item.xpAwarded || 0), 0);
   const verifiedCount = items.filter(item => item.status === 'accepted').length;
-  const pendingCount = items.filter(item => item.status === 'submitted').length;
+  const pendingCount = items.filter(item => item.status === 'submitted' || item.status === 'needs_changes').length;
 
   return (
     <section className="project-contributions" aria-labelledby="project-contributions-title">
@@ -271,6 +373,17 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
             <label>
               Project
               <input required minLength={3} maxLength={120} value={form.projectName} onChange={event => updateForm({ projectName: event.target.value })} />
+            </label>
+            <label className="pc-form__wide">
+              Shared review workspace <span className="pc-field-hint">Optional. Work linked to a workspace enters its authorized independent review queue and cannot be self-verified.</span>
+              <select value={form.workspaceId} onChange={event => updateForm({ workspaceId: event.target.value })}>
+                <option value="">Private record — no shared reviewer</option>
+                {workspaces.map(workspace => (
+                  <option key={workspace.workspaceId} value={workspace.workspaceId}>
+                    {workspace.workspaceName} · {workspace.role.replace('_', ' ')}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
               Work type
@@ -325,19 +438,26 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
           <div className="pc-empty__icon"><FileCheck2 size={20} /></div>
           <h4>No project contributions recorded yet</h4>
           <p>Start with the work already happening in the Contribution Network: decisions, research, implementation, tests, or documentation.</p>
-          <button type="button" className="pc-button pc-button--secondary" onClick={() => setFormOpen(true)}><Plus size={15} /> Record the first item</button>
+          <div className="pc-empty__actions">
+            <button type="button" className="pc-button pc-button--secondary" onClick={() => setFormOpen(true)}><Plus size={15} /> Record a contribution</button>
+            <button type="button" className="pc-button pc-button--primary" onClick={openFounderContributionDraft}>Use founder contribution draft</button>
+          </div>
         </div>
       ) : (
         <div className="pc-list">
           {items.map(item => {
             const draft = getDraft(item);
-            const canSelfVerify = !needsIndependentReview(item);
+            const canSelfVerify = !item.workspaceId && !needsIndependentReview(item);
+            const statusLabel = item.status === 'accepted'
+              ? item.verificationLevel === 'independently_verified' ? 'Independently reviewed' : 'Self-verified'
+              : item.status === 'needs_changes' ? 'Changes requested'
+                : item.status === 'rejected' ? 'Rejected' : 'Provisional';
             return (
               <article className="pc-card" key={item.id}>
                 <div className="pc-card__top">
                   <div className="pc-card__type">{WORK_TYPES.find(type => type.value === item.workType)?.label ?? 'Contribution'}</div>
                   <span className={item.status === 'accepted' ? 'pc-status pc-status--verified' : 'pc-status pc-status--provisional'}>
-                    {item.status === 'accepted' ? 'Self-verified' : 'Provisional'}
+                    {statusLabel}
                   </span>
                 </div>
                 <h4>{item.workTitle}</h4>
@@ -351,9 +471,59 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
                 <div className="pc-evidence-note"><strong>Evidence note</strong><p>{item.evidenceNote}</p></div>
                 {item.status === 'accepted' ? (
                   <div className="pc-verified-record">
-                    <div><ShieldCheck size={17} /><strong>50 XP recorded</strong><span>Rule project-self-v1</span></div>
-                    <p>{item.verificationNote}</p>
-                    <p className="pc-verified-meta">Self-verified by {item.reviewerName || 'the contributor'} · {formatDate(item.acceptedAt || item.createdAt)}. This is not an independent credential.</p>
+                    <div>
+                      <ShieldCheck size={17} />
+                      <strong>50 XP recorded</strong>
+                      <span>Rule {item.verificationLevel === 'independently_verified' ? 'project-independent-v1' : 'project-self-v1'}</span>
+                    </div>
+                    <p>{item.verificationLevel === 'independently_verified' ? item.reviewFeedback : item.verificationNote}</p>
+                    <p className="pc-verified-meta">
+                      {item.verificationLevel === 'independently_verified' ? 'Independently reviewed by ' : 'Self-verified by '}
+                      {item.reviewerName || 'the contributor'} · {formatDate(item.acceptedAt || item.createdAt)}.
+                      {item.verificationLevel === 'independently_verified' ? ' Reviewer identity and decision are retained in the audit history.' : ' Self-verification is not an independent credential.'}
+                    </p>
+                  </div>
+                ) : item.status === 'needs_changes' ? (
+                  <>
+                    <div className="pc-review-required pc-review-required--changes">
+                      <AlertTriangle size={17} />
+                      <div>
+                        <strong>Changes requested by {item.reviewerName || 'a workspace reviewer'}</strong>
+                        <p>{item.reviewFeedback || 'Review feedback was recorded. Inspect the review history for details.'}</p>
+                      </div>
+                    </div>
+                    <form className="pc-resubmit-form" onSubmit={event => void resubmitContribution(event, item)}>
+                      <h5>Revise and resubmit</h5>
+                      <label>
+                        Updated delivery description
+                        <textarea required minLength={30} maxLength={4000} rows={3} value={getResubmitDraft(item).description} onChange={event => updateResubmitDraft(item, { description: event.target.value })} />
+                      </label>
+                      <div className="pc-resubmit-form__grid">
+                        <label>
+                          Updated work URL
+                          <input type="url" maxLength={2048} value={getResubmitDraft(item).workUrl} onChange={event => updateResubmitDraft(item, { workUrl: event.target.value })} />
+                        </label>
+                        <label>
+                          Updated evidence URL
+                          <input type="url" maxLength={2048} value={getResubmitDraft(item).evidenceUrl} onChange={event => updateResubmitDraft(item, { evidenceUrl: event.target.value })} />
+                        </label>
+                      </div>
+                      <label>
+                        Updated evidence note
+                        <textarea required minLength={15} maxLength={1000} rows={2} value={getResubmitDraft(item).evidenceNote} onChange={event => updateResubmitDraft(item, { evidenceNote: event.target.value })} />
+                      </label>
+                      <button className="pc-button pc-button--primary" type="submit" disabled={saving || getResubmitDraft(item).description.trim().length < 30 || getResubmitDraft(item).evidenceNote.trim().length < 15}>
+                        {saving ? 'Submitting…' : 'Resubmit for review'}
+                      </button>
+                    </form>
+                  </>
+                ) : item.status === 'rejected' ? (
+                  <div className="pc-review-required pc-review-required--rejected">
+                    <AlertTriangle size={17} />
+                    <div>
+                      <strong>Contribution rejected · no XP awarded</strong>
+                      <p>{item.reviewFeedback || 'The reviewer rejected this submission.'}</p>
+                    </div>
                   </div>
                 ) : canSelfVerify ? (
                   <div className="pc-verify">
@@ -382,15 +552,30 @@ export default function ProjectContributions({ onUpdated }: { onUpdated?: () => 
                 ) : (
                   <div className="pc-review-required">
                     <AlertTriangle size={17} />
-                    <div><strong>Independent review required</strong><p>This record remains provisional. Self-verification cannot award XP for standard/high-risk or sensitive work. Attach review evidence and use a qualified reviewer before recognizing it.</p></div>
+                    <div><strong>Independent review required</strong><p>This record remains provisional. Self-verification cannot award XP for standard/high-risk or sensitive work. Select a shared workspace when recording the work to route it to an authorized reviewer.</p></div>
                   </div>
+                )}
+                {item.reviewHistory && item.reviewHistory.length > 0 && (
+                  <details className="pc-review-history">
+                    <summary>Review history ({item.reviewHistory.length})</summary>
+                    <div className="pc-review-history__events">
+                      {item.reviewHistory.map((event, index) => (
+                        <div key={event.reviewedAt + '-' + index}>
+                          <strong>{event.decision.replace('_', ' ')} · {event.reviewerName}</strong>
+                          <span>Revision {event.revisionNumber} · {formatDate(event.reviewedAt)}</span>
+                          <p>{event.feedback}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 )}
               </article>
             );
           })}
         </div>
       )}
-      <p className="pc-footnote"><Sparkles size={14} /> Work records stay linked to evidence. Provisional work earns no XP; self-verification is explicitly not independent validation.</p>
+      <ProjectReviewQueue onUpdated={onUpdated} />
+      <p className="pc-footnote"><Sparkles size={14} /> Work records stay linked to evidence. Shared records require an authorized reviewer; private self-verification is explicitly not independent validation.</p>
     </section>
   );
 }

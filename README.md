@@ -1,10 +1,10 @@
 # Contributions Centre
 
-Contributions Centre is the application prototype for the [Contribution Network](https://github.com/Loofy147/contribution-network), which is its own first real project and first consumer use case. **ContribQuest** is the live prototype. The app now includes a private Project 0 contribution ledger for recording founder/operator work, linking it to work items and evidence, and retaining acceptance criteria and verification rationale. Low-risk, non-sensitive work may be self-verified for 50 XP; provisional or higher-risk work earns no XP through this flow.
+Contributions Centre is the application prototype for the [Contribution Network](https://github.com/Loofy147/contribution-network), which is its own first real project and first consumer use case. **ContribQuest** is the live prototype. The app includes a Project 0 ledger for recording founder/operator work, linking deliverables and evidence, and preserving acceptance criteria. Private, low-risk, non-sensitive work may be self-verified. Work deliberately shared to a workspace enters an independent review queue: authorized reviewers/admins can accept, request changes, or reject; self-review is blocked; accepted work gets one 50 XP award only after every criterion passes. Rejected work gets no XP, and decisions/revisions are auditable. XP remains a prototype reputation signal, not money or an external credential.
 
 - **Live prototype:** https://contribquest-lygj1x.v2.appdeploy.ai/
 - **Canonical repository:** https://github.com/Loofy147/Contribution-bounties-centre-
-- **Imported deployed source snapshot:** AppDeploy version 1791833721555
+- **Imported deployed source snapshot:** AppDeploy version 1792091173658
 
 ## Current working boundary
 
