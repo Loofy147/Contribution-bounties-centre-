@@ -10,7 +10,7 @@
     "test:contract": "node --test tests/repository-contract.test.mjs"
   },
   "dependencies": {
-    "lucide-react": "^0.469.0",
+    "lucide-react": "^1.55.0",
     "posthog-js": "^1.278.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
